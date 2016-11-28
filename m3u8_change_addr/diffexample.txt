@@ -1,0 +1,356 @@
+5c5
+< http://www.example.com/mid.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/mid.m3u8
+7c7
+< http://www.example.com/hi.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/hi.m3u8
+9c9
+< http://www.example.com/audio-only.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/audio-only.m3u8
+15c15
+< http://www.example.com/mid.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/mid.m3u8
+17c17
+< http://www.example.com/hi.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/hi.m3u8
+19c19
+< http://www.example.com/audio-only.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/audio-only.m3u8
+25c25
+< http://www.example.com/mid.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/mid.m3u8
+27c27
+< http://www.example.com/hi.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/hi.m3u8
+29c29
+< http://www.example.com/audio-only.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/audio-only.m3u8
+35c35
+< http://www.example.com/mid.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/mid.m3u8
+37c37
+< http://www.example.com/hi.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/hi.m3u8
+39c39
+< http://www.example.com/audio-only.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/audio-only.m3u8
+46c46
+< http://www.example.com/mid.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/mid.m3u8
+48c48
+< http://www.example.com/hi.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/hi.m3u8
+50c50
+< http://www.example.com/audio-only.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/audio-only.m3u8
+56c56
+< http://www.example.com/mid.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/mid.m3u8
+58c58
+< http://www.example.com/hi.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/hi.m3u8
+60c60
+< http://www.example.com/audio-only.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/audio-only.m3u8
+66c66
+< http://www.example.com/mid.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/mid.m3u8
+68c68
+< http://www.example.com/hi.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/hi.m3u8
+70c70
+< http://www.example.com/audio-only.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/audio-only.m3u8
+76c76
+< http://www.example.com/mid.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/mid.m3u8
+78c78
+< http://www.example.com/hi.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/hi.m3u8
+80c80
+< http://www.example.com/audio-only.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/audio-only.m3u8
+86c86
+< http://www.example.com/mid.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/mid.m3u8
+88c88
+< http://www.example.com/hi.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/hi.m3u8
+90c90
+< http://www.example.com/audio-only.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/audio-only.m3u8
+96c96
+< http://www.example.com/mid.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/mid.m3u8
+98c98
+< http://www.example.com/hi.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/hi.m3u8
+100c100
+< http://www.example.com/audio-only.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/audio-only.m3u8
+106c106
+< http://www.example.com/mid.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/mid.m3u8
+108c108
+< http://www.example.com/hi.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/hi.m3u8
+110c110
+< http://www.example.com/audio-only.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/audio-only.m3u8
+116c116
+< http://www.example.com/mid.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/mid.m3u8
+118c118
+< http://www.example.com/hi.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/hi.m3u8
+120c120
+< http://www.example.com/audio-only.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/audio-only.m3u8
+126c126
+< http://www.example.com/mid.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/mid.m3u8
+128c128
+< http://www.example.com/hi.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/hi.m3u8
+130c130
+< http://www.example.com/audio-only.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/audio-only.m3u8
+136c136
+< http://www.example.com/mid.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/mid.m3u8
+138c138
+< http://www.example.com/hi.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/hi.m3u8
+140c140
+< http://www.example.com/audio-only.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/audio-only.m3u8
+146c146
+< http://www.example.com/mid.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/mid.m3u8
+148c148
+< http://www.example.com/hi.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/hi.m3u8
+150c150
+< http://www.example.com/audio-only.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/audio-only.m3u8
+156c156
+< http://www.example.com/mid.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/mid.m3u8
+158c158
+< http://www.example.com/hi.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/hi.m3u8
+160c160
+< http://www.example.com/audio-only.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/audio-only.m3u8
+166c166
+< http://www.example.com/mid.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/mid.m3u8
+168c168
+< http://www.example.com/hi.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/hi.m3u8
+170c170
+< http://www.example.com/audio-only.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/audio-only.m3u8
+176c176
+< http://www.example.com/mid.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/mid.m3u8
+178c178
+< http://www.example.com/hi.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/hi.m3u8
+180c180
+< http://www.example.com/audio-only.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/audio-only.m3u8
+186c186
+< http://www.example.com/mid.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/mid.m3u8
+188c188
+< http://www.example.com/hi.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/hi.m3u8
+190c190
+< http://www.example.com/audio-only.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/audio-only.m3u8
+196c196
+< http://www.example.com/mid.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/mid.m3u8
+198c198
+< http://www.example.com/hi.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/hi.m3u8
+200c200
+< http://www.example.com/audio-only.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/audio-only.m3u8
+206c206
+< http://www.example.com/mid.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/mid.m3u8
+208c208
+< http://www.example.com/hi.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/hi.m3u8
+210c210
+< http://www.example.com/audio-only.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/audio-only.m3u8
+216c216
+< http://www.example.com/mid.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/mid.m3u8
+218c218
+< http://www.example.com/hi.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/hi.m3u8
+220c220
+< http://www.example.com/audio-only.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/audio-only.m3u8
+226c226
+< http://www.example.com/mid.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/mid.m3u8
+228c228
+< http://www.example.com/hi.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/hi.m3u8
+230c230
+< http://www.example.com/audio-only.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/audio-only.m3u8
+236c236
+< http://www.example.com/mid.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/mid.m3u8
+238c238
+< http://www.example.com/hi.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/hi.m3u8
+240c240
+< http://www.example.com/audio-only.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/audio-only.m3u8
+246c246
+< http://www.example.com/mid.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/mid.m3u8
+248c248
+< http://www.example.com/hi.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/hi.m3u8
+250c250
+< http://www.example.com/audio-only.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/audio-only.m3u8
+256c256
+< http://www.example.com/mid.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/mid.m3u8
+258c258
+< http://www.example.com/hi.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/hi.m3u8
+260c260
+< http://www.example.com/audio-only.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/audio-only.m3u8
+266c266
+< http://www.example.com/mid.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/mid.m3u8
+268c268
+< http://www.example.com/hi.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/hi.m3u8
+270c270
+< http://www.example.com/audio-only.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/audio-only.m3u8
+276c276
+< http://www.example.com/mid.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/mid.m3u8
+278c278
+< http://www.example.com/hi.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/hi.m3u8
+280c280
+< http://www.example.com/audio-only.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/audio-only.m3u8
+286c286
+< http://www.example.com/mid.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/mid.m3u8
+288c288
+< http://www.example.com/hi.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/hi.m3u8
+290c290
+< http://www.example.com/audio-only.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/audio-only.m3u8
+296c296
+< http://www.example.com/mid.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/mid.m3u8
+298c298
+< http://www.example.com/hi.m3u8
+---
+> http://meteor-host/meteorq.2.1.1.auth-info-token-appid-passwd/www.example.com/hi.m3u8
