@@ -659,49 +659,51 @@ typedef struct {
     u_char *start;
     u_char *end;
 
-    u_char *pos;
+    u_char *parsed1;
     u_char *send;
 }chgAddr_buf_t;
 
 
-int chgAddr_long_file( recv_buf_t *recv,chgAddr_buf_t *handle,char *visit_url_info /* contains:at_flag, domain_flag,domain,dir1st... */)
+int convert_addr_in_file( recv_buf_t *recv_buf,chgAddr_buf_t *convert_buf,char *visit_url_info /* contains:at_flag, domain_flag,domain,dir1st... */)
 {
     //ASSERT(DOMAIN_FLAG != 0 && AT_FLAG != 0);
-    u_char *const recved1 = recv->recved1;
-    u_char *pos = recv->parsed1;  // |<-- parsed -->| parsed1..recved1 | .. end|
+    u_char *const recved1 = recv_buf->recved1;
+    u_char *const c_end = convert_buf->end;
+    u_char *r_pos = recv_buf->parsed1; 	 // |<-- parsed -->| parsed1..recved1 | .. end|
+    u_char *c_pos = convert_buf->parsed1;
     u_char *line_start,*line_end;
 
     *recved1 = '\n';
-    for(;pos < recved1;) 
+    for(;r_pos < recved1;) 
     {
-        //should assert(handle->pos < handle->end)
-        line_start = pos;            
-        line_end = strchr(pos/*line_start*/,'\n'); //   LINE_END or RECVED1 or NULL(EOF?) 
+        //should assert(convert_buf->pos < convert_buf->end)
+        line_start = r_pos;            
+        line_end = strchr(r_pos/*line_start*/,'\n'); //   LINE_END or RECVED1 or NULL(EOF?) 
 
         if ( line_end == recved1 ||  // NOT COMPLETED LINE
                 line_end ?     //COMPLETED LINE
-                ( handle->end - handle->pos < line_end - line_start ) :    //A REAL_LINE
-                ( handle->end - handle->pos < strlen(pos) ) )              //EOF? '\0'
+                ( c_end - c_pos < line_end - line_start ) :    //A REAL_LINE
+                ( c_end - c_pos < strlen(r_pos) ) )              //EOF? '\0'
         {
             if(line_end - line_start > 4096/2) //如何判断单行过长？？
                 return -1; //bug：若单行过长, 则无法按行解析，需设置一个长度值；
             break;  //若没有 足.够.的.缓存处理 完.整.的.一行数据，则parse end
         }
 
-        if( *pos == '#')
+        if( *r_pos == '#')
         {
             do {
-                *handle->pos++ = *pos++; 
-            }while(*pos != '\n');   // the *recv->recved1 should be '\n'
+                *c_pos++ = *r_pos++; 
+            }while(*r_pos != '\n');   // the *recv_buf->recved1 should be '\n'
         }
-        else if ( *pos == '\n' || *pos == '\r' || *pos == ' ' || *pos == '\t')
+        else if ( *r_pos == '\n' || *r_pos == '\r' || *r_pos == ' ' || *r_pos == '\t')
         {                    
-            *handle->pos++ = *pos++; 
+            *c_pos++ = *r_pos++; 
         }
         else
         {
             char url_in_file[666] ;    //.....temp....
-            if ( sscanf(pos,"%[^\n]",url_in_file) ) //  https://???-----------
+            if ( sscanf(r_pos,"%[^\n]",url_in_file) ) //  https://???-----------
             {
 #define AT_FLAG "3"    // 0 no change 1 dir1  2 domain 3 parent domain 4 all
 #define DOMAIN_FLAG "1" // 0 no 1 yes
@@ -717,11 +719,11 @@ int chgAddr_long_file( recv_buf_t *recv,chgAddr_buf_t *handle,char *visit_url_in
                 //printf("url:%s\n============\n",url_in_file);
 
                 int len = strlen(url);
-                if ( len < ( handle->end - handle->pos))
+                if ( len < ( c_end - c_pos))
                 {
-                    strcpy(handle->pos,url);
-                    handle->pos += len;
-                    pos = line_end;
+                    strcpy(c_pos,url);
+                    c_pos += len;
+                    r_pos = line_end;
                 }
                 else
                 {
@@ -736,13 +738,14 @@ int chgAddr_long_file( recv_buf_t *recv,chgAddr_buf_t *handle,char *visit_url_in
             {
                 //relative url? https? others? copy ?-----------------
                 do {
-                    *handle->pos++ = *pos++; 
-                }while(*pos != '\n');   // the *recv->recved1 should be '\n'              
+                    *c_pos++ = *r_pos++; 
+                }while(*r_pos != '\n');   // the *recv_buf->recved1 should be '\n'              
             }
         }
     }
 
-    recv->parsed1 = pos;
+    recv_buf->parsed1 = r_pos;
+    convert_buf->parsed1 = c_pos;
     // handle->pos,end,start,last = ???
     return 0;
 }
@@ -786,7 +789,7 @@ int main()
     r.end = recv_buf + sizeof(recv_buf) - 1;
 
     chgAddr_buf_t h;
-    h.pos = h.start = parse_buf;
+    h.parsed1 = h.start = parse_buf;
     h.send = parse_buf;
     h.end = parse_buf + sizeof(parse_buf) - 1;
 
@@ -821,15 +824,15 @@ int main()
             exit(1);
         }
 
-        chgAddr_long_file(&r,&h,NULL); // 逐行处理
+        convert_addr_in_file(&r,&h,NULL); // 逐行处理
 
         // send the parsed
         u_char *c = h.start;
-        for(;c<h.pos;c++)
+        for(;c<h.parsed1;c++)
             putchar(*c); // send -> | start -> pos|....
 
         //reset h.send,h.pos after sented
-        h.pos = h.start;   
+        h.parsed1 = h.start;   
     }
 
     exit(1);
