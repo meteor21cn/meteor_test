@@ -55,6 +55,8 @@ struct socks_order_s {
 
 	session_cache_t session_cache;	// 并行session，<session,session>
 
+	md5_cache_t 	md5_cache;		//  md5 cache
+
 	unsigned int order_status:8;
 	unsigned int auth_fail_times:4;
 	unsigned int frozen:1;			// 是否被冻结

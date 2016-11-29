@@ -486,3 +486,76 @@ static int _add_to_session_cache( socks_worker_process_t *process, socks_order_t
 
 
 
+static int _add_to_md5_cache( socks_worker_process_t *process, socks_order_t *order, char *addr, char *passwd)
+{
+	if (order->md5_cache.size == 0)
+		rb_tree_init_for_str_key( &order->md5_cache );
+
+	rb_node_t * node = rb_list_pop( &process->rb_node_pool );
+	if( !node ){
+		sys_log(LL_ERROR, "[ %s:%d ] no memory for md5_cache rb_node, order_id:%s", __FILE__, __LINE__, order->order_id);
+		return -1;
+	}
+	node->key.pkey = addr;
+	node->data = passwd;
+	if (rb_tree_insert_node( &order->md5_cache, node, 0 )< 0 )
+		rb_list_add( &process->rb_node_pool, node );
+	return 0;
+}
+
+int get_md5_without_cahce(socks_worker_process_t *process, socks_order_t *order, char *key, char *addr, char *passwd) {
+	char  conbinedstr[1024];
+    char  decrypt[16];
+    char  hex[33];
+
+    memset( conbinedstr, 0, sizeof(conbinedstr ) );
+    memset( decrypt, 0, sizeof(decrypt ) );
+    memset( hex, 0, sizeof(hex ) );
+
+    /*strcpy(conbinedstr, token);
+      strcat(conbinedstr, addr);
+      strcat(conbinedstr, key);*/
+    sprintf( conbinedstr, "%s|%s|%s", order->token, key, addr);
+
+    MD5_CTX md5;
+    MD5Init(&md5);              
+    MD5Update( &md5, conbinedstr, strlen((char *)conbinedstr) );
+    MD5Final( &md5, decrypt );       
+    MDString2Hex( decrypt, hex ); 
+
+    strcpy(passwd, hex);
+   
+    return 1;
+}
+
+int get_md5_with_cahce(socks_worker_process_t *process, socks_order_t *order, char *orderKey, char *addr, char *passwd) {
+	
+	rb_key_t key;
+	rb_node_t *node, *next;
+
+	key.pkey = addr;
+	node = rb_tree_search( &order->md5_cache, &key );
+	if( node ){
+		passwd = (char *)node->data;
+		if( passwd ){
+			return 1;
+		}
+	}
+	get_md5_without_cahce(process, order, orderKey, addr, passwd);
+   	_add_to_md5_cache(process, order, addr, passwd);
+    return 1;
+}
+
+int update_md5_cahce(socks_worker_process_t *process, socks_order_t *order, char *orderKey, char *addr) {
+
+	struct rb_node *node, *next;
+	
+	node = rb_first( &order->md5_cache );
+	while( node ) {
+
+		get_md5_without_cahce(process, order, orderKey, addr, node->data);
+		next = rb_next(node);
+		
+	}
+	return 1;
+}

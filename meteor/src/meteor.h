@@ -44,6 +44,8 @@ typedef struct rb_root activity_cache_t;
 typedef struct rb_root activity_order_cache_t;
 typedef struct rb_root udp_addr_session_map_cache_t;
 
+typedef struct rb_root md5_cache_t;
+
 typedef struct rb_node rb_node_t;
 typedef struct rb_list rb_node_cache_t;
 
