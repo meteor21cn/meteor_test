@@ -9,6 +9,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <assert.h>
 //#include "curl.h"
 #include "hls_http.h"
 //#include "msg.h"
@@ -34,7 +35,7 @@ struct meteorq
 
 // use sscanf ???
 /*
-对于http反向代理来说，如果客户端想要访问如下原始请求时： 
+   对于http反向代理来说，如果客户端想要访问如下原始请求时： 
 http://orignal-host/ORIGNAL_URI?queryString
 合作方的服务端获取订单的相关信息，并生成反向代理地址,客户端从合作方的服务端获取反向代理地址，然后向流星网关发起请求：
 http://meteor-host:port/meteor-req/orignal-host/ORIGNAL_URI?queryString
@@ -60,16 +61,16 @@ passwd：鉴权密码，算法为：HEX（MD5（token|orignal-host|orderKey）�
 */
 
 /*
-int rewrite_cycle()
-{
-     
-    while(1) {
-       
-    }
+   int rewrite_cycle()
+   {
 
-    return 1;
-}
-*/
+   while(1) {
+
+   }
+
+   return 1;
+   }
+   */
 
 static char *c_name[]={
     "com",
@@ -80,15 +81,14 @@ static char *c_name[]={
     NULL
 };
 
+// error: -1, not same corp: 0, same: 1 
 int is_domain_same_corp(char *visiting_domain, char *domain_in_file)
 {
-    if (visiting_domain == NULL || domain_in_file == NULL)
-        return -1;
+    assert(visiting_domain && domain_in_file );
 
     int len_v = strlen(visiting_domain);
     int len_f = strlen(domain_in_file);
 
-    //int short_len = len_f > len_v ? len_v : len_f;
     int dot_count = 0;
 
     char *v = visiting_domain + len_v;
@@ -105,11 +105,10 @@ int is_domain_same_corp(char *visiting_domain, char *domain_in_file)
     if ( dot_count > 2)
         return 1;
     else if ( dot_count < 2)
-       
         goto done;
     else
     {
-        int in_list,i;
+        int i;
 
         if(*v == *f && len_v == len_f)
             return 1;
@@ -140,17 +139,17 @@ int is_domain_same_corp(char *visiting_domain, char *domain_in_file)
             return 1;
     }
 
-    done: 
-        if (*v != *f)
-        {
-            return 0;
-        }
-        else
-        {
-            if ( len_v == len_f ) 
-                return 1;
-            return v == visiting_domain ? *--f == '.' : *--v == '.';
-        }
+done: 
+    if (*v != *f)
+    {
+        return 0;
+    }
+    else
+    {
+        if ( len_v == len_f ) 
+            return 1;
+        return v == visiting_domain ? *--f == '.' : *--v == '.';
+    }
 }
 
 int pocceess_from_stream(char *stream, char *str, struct hls_media_playlist *me)
@@ -177,43 +176,43 @@ int pocceess_from_stream(char *stream, char *str, struct hls_media_playlist *me)
 
 int get_meteorq(char *proxy_url, struct meteorq *extension)
 {
-   //char *proxy_url = "http://meteorq.1.2.abjkjkjkdfjkjk";
-   int ret = sscanf(proxy_url,"/meteorq.%d.%d.%d.%[^/]/%[^/]/%[^/]",
-    &extension->at_flag,
-    &extension->domain_flag,
-    &extension->auth_mode,
-    extension->auth_info,
-    extension->original_domain,
-    extension->dir_1st);
+    //char *proxy_url = "http://meteorq.1.2.abjkjkjkdfjkjk";
+    int ret = sscanf(proxy_url,"/meteorq.%d.%d.%d.%[^/]/%[^/]/%[^/]",
+            &extension->at_flag,
+            &extension->domain_flag,
+            &extension->auth_mode,
+            extension->auth_info,
+            extension->original_domain,
+            extension->dir_1st);
 
-   if ( ret != 6)
-   {
+    if ( ret != 6)
+    {
         return -1;
-   }
+    }
 
-   sprintf(extension->str, "/meteorq.%d.%d.%d.%s/", 
-    extension->at_flag,
-    extension->domain_flag,
-    extension->auth_mode,
-    extension->auth_info);
+    sprintf(extension->str, "/meteorq.%d.%d.%d.%s/", 
+            extension->at_flag,
+            extension->domain_flag,
+            extension->auth_mode,
+            extension->auth_info);
 
-   return 0;
+    return 0;
 }
 
 
 int rewrite_meteorq(char *token, char *addr, char *key, struct meteorq *extension)
 {
-     //extension->domain_flag
+    //extension->domain_flag
     //extension->auth_info
     //extension->str
 
     /*
-    鉴权模式（auth-mode）：后续可扩展其他模式，当前先实现默认模式1，其对应的鉴权信息auth-info格式为：
-订单token：默认为订单id；
-app标识：如安卓系统中的app包名或ios系统中为bundleid
-passwd：鉴权密码，算法为：HEX（MD5（token|orignal-host|orderKey））。注：采用orignal-host而没采用ORIGNAL_URI,是考虑到地址转换的性能。
-*/
-    
+       鉴权模式（auth-mode）：后续可扩展其他模式，当前先实现默认模式1，其对应的鉴权信息auth-info格式为：
+       订单token：默认为订单id；
+       app标识：如安卓系统中的app包名或ios系统中为bundleid
+       passwd：鉴权密码，算法为：HEX（MD5（token|orignal-host|orderKey））。注：采用orignal-host而没采用ORIGNAL_URI,是考虑到地址转换的性能。
+       */
+
     char  conbinedstr[1024];
     char  decrypt[16];
     char  hex[33];
@@ -221,10 +220,10 @@ passwd：鉴权密码，算法为：HEX（MD5（token|orignal-host|orderKey）�
     memset( conbinedstr, 0, sizeof(conbinedstr ) );
     memset( decrypt, 0, sizeof(decrypt ) );
     memset( hex, 0, sizeof(hex ) );
-    
+
     /*strcpy(conbinedstr, token);
-    strcat(conbinedstr, addr);
-    strcat(conbinedstr, key);*/
+      strcat(conbinedstr, addr);
+      strcat(conbinedstr, key);*/
     sprintf( conbinedstr, "%s|%s|%s", token, key, addr);
 
     MD5_CTX md5;
@@ -235,10 +234,10 @@ passwd：鉴权密码，算法为：HEX（MD5（token|orignal-host|orderKey）�
 
     strcpy( extension->auth_info, hex);
     sprintf(extension->str, "/meteorq.%d.%d.%d.%s/", 
-    extension->at_flag,
-    extension->domain_flag,
-    extension->auth_mode,
-    extension->auth_info);
+            extension->at_flag,
+            extension->domain_flag,
+            extension->auth_mode,
+            extension->auth_info);
 
     return 1;
 }
@@ -250,7 +249,7 @@ int generate_url(char *url, struct meteorq *extension, char *proxy_domain)
     strcat(temp, proxy_domain);
 
     //rewrite_meteorq(extension);
-                
+
     strcat(temp, extension->str);  // 
     strcat(temp, url + 7); // strstr MUST NOT NULL ------------
     strcpy(url, temp);
@@ -261,14 +260,22 @@ int generate_url_from_relative(char *url, struct meteorq *extension, char *proxy
     char temp[MAXSIZE];
     strcpy(temp, "http://");
     strcat(temp, proxy_domain);
-           
+
     //rewrite_meteorq(extension);
-                
+
     strcat(temp, extension->str);
     strcat(temp, extension->original_domain);
     if(*url == '/') strcat(temp, "/");
     else            strcat(temp, "/../");
-    strcat(temp, strstr(url, extension->dir_1st)); // seems same to the upper one
+    char *urltmp = strstr(url, extension->dir_1st);
+    if(urltmp)
+    {
+        strcat(temp,urltmp);
+    }
+    else
+    {
+        strcat(temp,url);
+    }
     strcpy(url, temp);
 }
 
@@ -286,37 +293,39 @@ static int rewrite_url(char **url, char *baseurl, char *proxy_domain)
         corp,//??
         all
     };
-    
+
     if (!strncmp(*url, "http://", 7)) {
         char url_domain[MAXSIZE];
         char dir_1st[MAXSIZE];
         sscanf(*url, "http://%[^/]/%[^/]", url_domain, dir_1st);
 
         switch(extension->at_flag) {
-        case none:    
-            break;
-        case dir_lst_level:
-            // auto-info needs to modify
-            if(!strcmp(extension->dir_1st, dir_1st)) {
+            case none:    
+                break;
+            case dir_lst_level:
+                // auto-info needs to modify
+                if(!strcmp(extension->dir_1st, dir_1st)) {
+                    generate_url(*url, extension, proxy_domain);
+                }            
+                break;
+            case domain:
+                if(!strcmp(extension->original_domain, url_domain)) {
+                    generate_url(*url, extension, proxy_domain);
+                }   
+                break;
+            case corp:
+                //father domain
+                // if(extension->original_domain == NULL || url_domain == NULL)
+                //   break;
+                if(is_domain_same_corp(extension->original_domain, url_domain)) {
+                    generate_url(*url, extension, proxy_domain);
+                }
+                break;
+            case all:
                 generate_url(*url, extension, proxy_domain);
-            }            
-            break;
-        case domain:
-            if(!strcmp(extension->original_domain, url_domain)) {
-                generate_url(*url, extension, proxy_domain);
-            }   
-            break;
-        case corp:
-            //father domain
-            if(!is_domain_same_corp(extension->original_domain, url_domain)) {
-                generate_url(*url, extension, proxy_domain);
-            }
-            break;
-        case all:
-            generate_url(*url, extension, proxy_domain);
-            break;
-        default:
-            return 1;
+                break;
+            default:
+                return 1;
         }
         return 0;
     }
@@ -327,24 +336,24 @@ static int rewrite_url(char **url, char *baseurl, char *proxy_domain)
         if(**url == '/') sscanf(*url, "/%[^/]", dir_1st);
         else             sscanf(*url, "%[^/]", dir_1st);
         switch(extension->at_flag) {
-        case none:    
-            break;
-        case dir_lst_level:
-            if(!strcmp(extension->dir_1st, dir_1st)) {
+            case none:    
+                break;
+            case dir_lst_level:
+                if(!strcmp(extension->dir_1st, dir_1st)) {
+                    generate_url_from_relative(*url, extension, proxy_domain);
+                }
+                break;
+            case domain:
+            case corp:
+            case all:
                 generate_url_from_relative(*url, extension, proxy_domain);
-            }
-            break;
-        case domain:
-        case corp:
-        case all:
-            generate_url_from_relative(*url, extension, proxy_domain);
-            break;
-        default:
-            return 1;
+                break;
+            default:
+                return 1;
         }
         return 0;
     }
-    
+
 }
 
 //
@@ -372,7 +381,7 @@ static int extend_url(char **url, const char *baseurl)
         free(domain);
         return 0;
     }
-    
+
     else {
         // URLs can have '?'. To make /../ work, remove it.
         char *find_questionmark = strchr(baseurl, '?');
@@ -445,7 +454,7 @@ static int media_playlist_get_links(struct hls_media_playlist *me, char *proxy_d
     for (int i = 0; i < me->count; i++) {
         ms[i].url = malloc(strlen(src));
     }
-    
+
     for (int i = 0; i < me->count; i++) {
         while ((src = (strchr(src, '\n')))) {
             src++;
@@ -484,11 +493,11 @@ int handle_hls_media_playlist(struct hls_media_playlist *me)
     me->count = get_link_count(me->source);
     me->media_segment = malloc(sizeof(struct hls_media_segment) * me->count);
 
-//    if (media_playlist_get_links(me)) 
+    //    if (media_playlist_get_links(me)) 
 
     /*{
-        //MSG_ERROR("Could not parse links. Exiting.\n");
-        return 1;
+    //MSG_ERROR("Could not parse links. Exiting.\n");
+    return 1;
     }
     */
     return 0;
@@ -572,51 +581,51 @@ void print_hls_master_playlist(struct hls_master_playlist *ma)
 }
 
 /*
-int download_hls(struct hls_media_playlist *me)
-{
-    //MSG_VERBOSE("Downloading %d segments.\n", me->count);
+   int download_hls(struct hls_media_playlist *me)
+   {
+//MSG_VERBOSE("Downloading %d segments.\n", me->count);
 
-    char filename[MAX_FILENAME_LEN];
+char filename[MAX_FILENAME_LEN];
 
-    if (hls_args.custom_filename) {
-        strcpy(filename, hls_args.filename);
-    } else {
-        strcpy(filename, "000_hls_output.ts");
-    }
+if (hls_args.custom_filename) {
+strcpy(filename, hls_args.filename);
+} else {
+strcpy(filename, "000_hls_output.ts");
+}
 
-    if (access(filename, F_OK) != -1) {
-        if (hls_args.force_overwrite) {
-            if (remove(filename) != 0) {
-                MSG_ERROR("Error overwriting file");
-                exit(1);
-            }
-        } else {
-            char userchoice;
-            //MSG_PRINT("File already exists. Overwrite? (y/n) ");
-            scanf("\n%c", &userchoice);
-            if (userchoice == 'y') {
-                if (remove(filename) != 0) {
-                    //MSG_ERROR("Error overwriting file");
-                    exit(1);
-                }
-            } else {
-                //MSG_WARNING("Choose a different filename. Exiting.\n");
-                exit(0);
-            }
-        }
-    }
+if (access(filename, F_OK) != -1) {
+if (hls_args.force_overwrite) {
+if (remove(filename) != 0) {
+MSG_ERROR("Error overwriting file");
+exit(1);
+}
+} else {
+char userchoice;
+//MSG_PRINT("File already exists. Overwrite? (y/n) ");
+scanf("\n%c", &userchoice);
+if (userchoice == 'y') {
+if (remove(filename) != 0) {
+//MSG_ERROR("Error overwriting file");
+exit(1);
+}
+} else {
+//MSG_WARNING("Choose a different filename. Exiting.\n");
+exit(0);
+}
+}
+}
 
-    FILE *pFile = fopen(filename, "wb");
+FILE *pFile = fopen(filename, "wb");
 
-    for (int i = 0; i < me->count; i++) {
-        //MSG_PRINT("Downloading part %d\n", i);
-        struct ByteBuffer seg;
-        seg.len = (int)get_data_from_url(me->media_segment[i].url, NULL, &(seg.data), BINARY);
-        fwrite(seg.data, 1, seg.len, pFile);
-        free(seg.data);
-    }
-    fclose(pFile);
-    return 0;
+for (int i = 0; i < me->count; i++) {
+//MSG_PRINT("Downloading part %d\n", i);
+struct ByteBuffer seg;
+seg.len = (int)get_data_from_url(me->media_segment[i].url, NULL, &(seg.data), BINARY);
+fwrite(seg.data, 1, seg.len, pFile);
+free(seg.data);
+}
+fclose(pFile);
+return 0;
 }
 */
 
@@ -658,83 +667,83 @@ typedef struct {
 int chgAddr_long_file( recv_buf_t *recv,chgAddr_buf_t *handle,char *visit_url_info /* contains:at_flag, domain_flag,domain,dir1st... */)
 {
     //ASSERT(DOMAIN_FLAG != 0 && AT_FLAG != 0);
-        u_char *const recved1 = recv->recved1;
-        u_char *pos = recv->parsed1;  // |<-- parsed -->| parsed1..recved1 | .. end|
-        u_char *line_start,*line_end;
+    u_char *const recved1 = recv->recved1;
+    u_char *pos = recv->parsed1;  // |<-- parsed -->| parsed1..recved1 | .. end|
+    u_char *line_start,*line_end;
 
-        *recved1 = '\n';
-        for(;pos < recved1;) 
+    *recved1 = '\n';
+    for(;pos < recved1;) 
+    {
+        //should assert(handle->pos < handle->end)
+        line_start = pos;            
+        line_end = strchr(pos/*line_start*/,'\n'); //   LINE_END or RECVED1 or NULL(EOF?) 
+
+        if ( line_end == recved1 ||  // NOT COMPLETED LINE
+                line_end ?     //COMPLETED LINE
+                ( handle->end - handle->pos < line_end - line_start ) :    //A REAL_LINE
+                ( handle->end - handle->pos < strlen(pos) ) )              //EOF? '\0'
         {
-            //should assert(handle->pos < handle->end)
-            line_start = pos;            
-            line_end = strchr(pos/*line_start*/,'\n'); //   LINE_END or RECVED1 or NULL(EOF?) 
+            if(line_end - line_start > 4096/2) //如何判断单行过长？？
+                return -1; //bug：若单行过长, 则无法按行解析，需设置一个长度值；
+            break;  //若没有 足.够.的.缓存处理 完.整.的.一行数据，则parse end
+        }
 
-            if ( line_end == recved1 ||  // NOT COMPLETED LINE
-                 line_end ?     //COMPLETED LINE
-                 ( handle->end - handle->pos < line_end - line_start ) :    //A REAL_LINE
-                 ( handle->end - handle->pos < strlen(pos) ) )              //EOF? '\0'
-            {
-                if(line_end - line_start > 4096/2) //如何判断单行过长？？
-                    return -1; //bug：若单行过长, 则无法按行解析，需设置一个长度值；
-                break;  //若没有 足.够.的.缓存处理 完.整.的.一行数据，则parse end
-            }
-
-            if( *pos == '#')
-            {
-                do {
-                   *handle->pos++ = *pos++; 
-                }while(*pos != '\n');   // the *recv->recved1 should be '\n'
-            }
-            else if ( *pos == '\n' || *pos == '\r' || *pos == ' ' || *pos == '\t')
-            {                    
+        if( *pos == '#')
+        {
+            do {
                 *handle->pos++ = *pos++; 
-            }
-            else
+            }while(*pos != '\n');   // the *recv->recved1 should be '\n'
+        }
+        else if ( *pos == '\n' || *pos == '\r' || *pos == ' ' || *pos == '\t')
+        {                    
+            *handle->pos++ = *pos++; 
+        }
+        else
+        {
+            char url_in_file[666] ;    //.....temp....
+            if ( sscanf(pos,"%[^\n]",url_in_file) ) //  https://???-----------
             {
-                char url_in_file[666] = "http://";    //.....temp....
-                if ( sscanf(pos,"http://%[^\n]",&url_in_file[7]) ) //  https://???-----------
+#define AT_FLAG "3"    // 0 no change 1 dir1  2 domain 3 parent domain 4 all
+#define DOMAIN_FLAG "1" // 0 no 1 yes
+#define AUTH_MODE  "1"  
+
+                char *url = url_in_file;
+                char *base_url = "/meteorq."AT_FLAG"."DOMAIN_FLAG"."AUTH_MODE
+                    ".auth-info-token-appid-passwd/www.example.com/dir1/ORGRINAL-URI";
+                char *proxy_domain = "meteor-host";
+
+                rewrite_url(&url, base_url, proxy_domain);
+
+                //printf("url:%s\n============\n",url_in_file);
+
+                int len = strlen(url);
+                if ( len < ( handle->end - handle->pos))
                 {
-                    #define AT_FLAG "2"    // 0 no change 1 dir1  2 domain 3 parent domain 4 all
-                    #define DOMAIN_FLAG "1" // 0 no 1 yes
-                    #define AUTH_MODE  "1"  
-
-                    char *url = url_in_file;
-                    char *base_url = "/meteorq."AT_FLAG"."DOMAIN_FLAG"."AUTH_MODE
-                        ".auth-info-token-appid-passwd/www.example.com/dir1/ORGRINAL-URI";
-                    char *proxy_domain = "meteor-host";
-
-                    rewrite_url(&url, base_url, proxy_domain);
-
-                    //printf("url:%s\n============\n",url_in_file);
-
-                    int len = strlen(url);
-                    if ( len < ( handle->end - handle->pos))
-                    {
-                        strcpy(handle->pos,url);
-                        handle->pos += len;
-                        pos = line_end;
-                    }
-                    else
-                    {
-                        break;
-                    }
-
-                    #undef AT_FLAG
-                    #undef DOMAIN_FLAG
-                    #undef AUTH_MODE
+                    strcpy(handle->pos,url);
+                    handle->pos += len;
+                    pos = line_end;
                 }
                 else
                 {
-                    //relative url? https? others? copy ?-----------------
-                    do {
-                     *handle->pos++ = *pos++; 
-                    }while(*pos != '\n');   // the *recv->recved1 should be '\n'              
+                    break;
                 }
+
+#undef AT_FLAG
+#undef DOMAIN_FLAG
+#undef AUTH_MODE
+            }
+            else
+            {
+                //relative url? https? others? copy ?-----------------
+                do {
+                    *handle->pos++ = *pos++; 
+                }while(*pos != '\n');   // the *recv->recved1 should be '\n'              
             }
         }
+    }
 
-        recv->parsed1 = pos;
-       // handle->pos,end,start,last = ???
+    recv->parsed1 = pos;
+    // handle->pos,end,start,last = ???
     return 0;
 }
 
@@ -743,18 +752,18 @@ int chgAddr_long_file( recv_buf_t *recv,chgAddr_buf_t *handle,char *visit_url_in
 
 // for TEST....
 static void read_file(FILE* fp, char** output, int* length) {
-  #include <sys/stat.h>
+#include <sys/stat.h>
     int fileno(FILE*);
-  struct stat filestats;
-  int fd = fileno(fp);
-  fstat(fd, &filestats);
-  *length = filestats.st_size;
-  *output = malloc(*length + 1);
-  int start = 0;
-  int bytes_read;
-  while ((bytes_read = fread(*output + start, 1, *length - start, fp))) {
-    start += bytes_read;
-  }
+    struct stat filestats;
+    int fd = fileno(fp);
+    fstat(fd, &filestats);
+    *length = filestats.st_size;
+    *output = malloc(*length + 1);
+    int start = 0;
+    int bytes_read;
+    while ((bytes_read = fread(*output + start, 1, *length - start, fp))) {
+        start += bytes_read;
+    }
 }
 
 //test
@@ -771,7 +780,7 @@ int main()
         exit(EXIT_FAILURE);
     }
 
-//INIT　BUF ---------------------------------------------------
+    //INIT　BUF ---------------------------------------------------
     recv_buf_t r;
     r.recved1 = r.parsed1 = r.start = recv_buf;
     r.end = recv_buf + sizeof(recv_buf) - 1;
@@ -781,49 +790,49 @@ int main()
     h.send = parse_buf;
     h.end = parse_buf + sizeof(parse_buf) - 1;
 
-for(;;)
-{
-    // reset r.pos r.recved1
-    if ( r.parsed1 == r.recved1)
+    for(;;)
     {
-        r.parsed1 = r.recved1 = r.start;
-    }
-    else if ( r.recved1 == r.end /*or r.end - r.recved1 < 300 ???*/ ) 
-    {
-        int len = r.recved1 - r.parsed1;
-        memmove(r.start,r.parsed1,len);
-        r.parsed1 = r.start;
-        r.recved1 = r.start + len;
-    }
+        // reset r.pos r.recved1
+        if ( r.parsed1 == r.recved1)
+        {
+            r.parsed1 = r.recved1 = r.start;
+        }
+        else if ( r.recved1 == r.end /*or r.end - r.recved1 < 300 ???*/ ) 
+        {
+            int len = r.recved1 - r.parsed1;
+            memmove(r.start,r.parsed1,len);
+            r.parsed1 = r.start;
+            r.recved1 = r.start + len;
+        }
 
-    int ret = read(fd,r.recved1,r.end - r.recved1); 
+        int ret = read(fd,r.recved1,r.end - r.recved1); 
 
-    if (ret == 0)
-    {
-        break; //EOF
-    }
-    else if (ret>0)
-    {
-        r.recved1 += ret;
-    }
-    else
-    {
-        printf("read error\n");
-        exit(1);
-    }
+        if (ret == 0)
+        {
+            break; //EOF
+        }
+        else if (ret>0)
+        {
+            r.recved1 += ret;
+        }
+        else
+        {
+            printf("read error\n");
+            exit(1);
+        }
 
-    chgAddr_long_file(&r,&h,NULL); // 逐行处理
+        chgAddr_long_file(&r,&h,NULL); // 逐行处理
 
-    // send the parsed
-    u_char *c = h.start;
-    for(;c<h.pos;c++)
+        // send the parsed
+        u_char *c = h.start;
+        for(;c<h.pos;c++)
             putchar(*c); // send -> | start -> pos|....
 
-    //reset h.send,h.pos after sented
-    h.pos = h.start;   
-}
+        //reset h.send,h.pos after sented
+        h.pos = h.start;   
+    }
 
-exit(1);
+    exit(1);
     //printf("%s\n",input);
     char myurl[][4096]= {
         "http://www.example.com/low.m3u8",
@@ -843,15 +852,15 @@ exit(1);
     };
     int num = sizeof(myurl)/sizeof(myurl[0]);
 
-    #define AT_FLAG "1"    // 0 no change 1 dir1  2 domain 3 parent domain 4 all
-    #define DOMAIN_FLAG "1" // 0 no 1 yes
-    #define AUTH_MODE  "1"  
+#define AT_FLAG "1"    // 0 no change 1 dir1  2 domain 3 parent domain 4 all
+#define DOMAIN_FLAG "1" // 0 no 1 yes
+#define AUTH_MODE  "1"  
 
     for(int i=0;i<num;i++)
     {
         char *url = myurl[i];
         char *base_url = "/meteorq."AT_FLAG"."DOMAIN_FLAG"."AUTH_MODE
-        ".auth-info-token-appid-passwd/www.example.com/dir1/ORGRINAL-URI";
+            ".auth-info-token-appid-passwd/www.example.com/dir1/ORGRINAL-URI";
         char *proxy_domain = "meteor-host";
         rewrite_url(&url, base_url, proxy_domain);
         printf("%s\n", url);
