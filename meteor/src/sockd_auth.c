@@ -503,7 +503,7 @@ static int _add_to_md5_cache( socks_worker_process_t *process, socks_order_t *or
 	return 0;
 }
 
-int get_md5_without_cahce(socks_worker_process_t *process, socks_order_t *order, char *key, char *addr, char *passwd) {
+int get_md5_without_cache(socks_worker_process_t *process, socks_order_t *order, char *key, char *addr, char *passwd) {
 	char  conbinedstr[1024];
     char  decrypt[16];
     char  hex[33];
@@ -528,7 +528,7 @@ int get_md5_without_cahce(socks_worker_process_t *process, socks_order_t *order,
     return 1;
 }
 
-int get_md5_with_cahce(socks_worker_process_t *process, socks_order_t *order, char *orderKey, char *addr, char *passwd) {
+int get_md5_with_cache(socks_worker_process_t *process, socks_order_t *order, char *orderKey, char *addr, char *passwd) {
 	
 	rb_key_t key;
 	rb_node_t *node, *next;
@@ -546,15 +546,15 @@ int get_md5_with_cahce(socks_worker_process_t *process, socks_order_t *order, ch
     return 1;
 }
 
-int update_md5_cahce(socks_worker_process_t *process, socks_order_t *order, char *orderKey, char *addr) {
+int update_md5_cache(socks_worker_process_t *process, socks_order_t *order, char *orderKey, char *addr) {
 
-	struct rb_node *node, *next;
+	struct rb_node *node;
 	
 	node = rb_first( &order->md5_cache );
 	while( node ) {
 
 		get_md5_without_cahce(process, order, orderKey, addr, node->data);
-		next = rb_next(node);
+		node = rb_next(node);
 		
 	}
 	return 1;
