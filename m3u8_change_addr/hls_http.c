@@ -764,7 +764,7 @@ int main()
     char recv_buf[4096];
     char parse_buf[4096];
 
-    fd = open("example.m3u8",O_RDONLY);
+    fd = open("example1.m3u8",O_RDONLY);
     if (fd < 0) 
     {
         printf("File not found!\n");
