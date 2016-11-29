@@ -87,7 +87,7 @@ int is_domain_same_corp(char *visiting_domain, char *domain_in_file)
     int len_v = strlen(visiting_domain);
     int len_f = strlen(domain_in_file);
 
-    int short_len = len_f > len_v ? len_v : len_f;
+    //int short_len = len_f > len_v ? len_v : len_f;
     int dot_count = 0;
 
     char *v = visiting_domain + len_v;
@@ -125,17 +125,15 @@ int is_domain_same_corp(char *visiting_domain, char *domain_in_file)
             }
         }
 
-        in_list = 0;
         for ( i = 0; c_name[i]; i++)
         {
             if(!strcmp(c_name[i],c_tmp)) //
             {
-                in_list = 1;
                 break;
             }
         }
 
-        if (in_list)
+        if (c_name[i])
             goto done;
         else
             return 1;
