@@ -1,8 +1,8 @@
 hls:  hls_http.o
-	gcc -o hls hls_http.o  && ./hls > test.txt
+	gcc -o hls hls_http.o 
 
-hls_http.o: hls_http.c
-	gcc -c -g hls_http.c -std=c99
+hls_http.o: hls_http.c lib/md5c.c
+	gcc -c -g hls_http.c lib/md5c.c -std=c99
 
 clean:
 	rm hls hls_http.o

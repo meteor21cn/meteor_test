@@ -13,6 +13,7 @@
 #include "hls_http.h"
 //#include "msg.h"
 //#include "misc.h"
+#include "lib/md5c.c"
 
 typedef unsigned char u_char;
 
@@ -202,9 +203,9 @@ int get_meteorq(char *proxy_url, struct meteorq *extension)
 }
 
 
-int rewrite_meteorq(struct meteorq *extension)
+int rewrite_meteorq(char *token, char *addr, char *key, struct meteorq *extension)
 {
-    //extension->domain_flag
+     //extension->domain_flag
     //extension->auth_info
     //extension->str
 
@@ -215,10 +216,33 @@ app标识：如安卓系统中的app包名或ios系统中为bundleid
 passwd：鉴权密码，算法为：HEX（MD5（token|orignal-host|orderKey））。注：采用orignal-host而没采用ORIGNAL_URI,是考虑到地址转换的性能。
 */
     
-    extension->domain_flag = 1;
-    //MD5（token|orignal-host|orderKey）
+    char  conbinedstr[1024];
+    char  decrypt[16];
+    char  hex[33];
 
-    return 0;
+    memset( conbinedstr, 0, sizeof(conbinedstr ) );
+    memset( decrypt, 0, sizeof(decrypt ) );
+    memset( hex, 0, sizeof(hex ) );
+    
+    /*strcpy(conbinedstr, token);
+    strcat(conbinedstr, addr);
+    strcat(conbinedstr, key);*/
+    sprintf( conbinedstr, "%s|%s|%s", token, key, addr);
+
+    MD5_CTX md5;
+    MD5Init(&md5);              
+    MD5Update( &md5, conbinedstr, strlen((char *)conbinedstr) );
+    MD5Final( &md5, decrypt );       
+    MDString2Hex( decrypt, hex ); 
+
+    strcpy( extension->auth_info, hex);
+    sprintf(extension->str, "/meteorq.%d.%d.%d.%s/", 
+    extension->at_flag,
+    extension->domain_flag,
+    extension->auth_mode,
+    extension->auth_info);
+
+    return 1;
 }
 
 int generate_url(char *url, struct meteorq *extension, char *proxy_domain)
@@ -227,7 +251,7 @@ int generate_url(char *url, struct meteorq *extension, char *proxy_domain)
     strcpy(temp, "http://");
     strcat(temp, proxy_domain);
 
-    rewrite_meteorq(extension);
+    //rewrite_meteorq(extension);
                 
     strcat(temp, extension->str);  // 
     strcat(temp, url + 7); // strstr MUST NOT NULL ------------
@@ -240,7 +264,7 @@ int generate_url_from_relative(char *url, struct meteorq *extension, char *proxy
     strcpy(temp, "http://");
     strcat(temp, proxy_domain);
            
-    rewrite_meteorq(extension);
+    //rewrite_meteorq(extension);
                 
     strcat(temp, extension->str);
     strcat(temp, extension->original_domain);
