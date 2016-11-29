@@ -10,6 +10,7 @@
 #include "hls_http.h"
 //#include "msg.h"
 //#include "misc.h"
+#include "lib/md5c.h"
 
 typedef unsigned char u_char;
 
