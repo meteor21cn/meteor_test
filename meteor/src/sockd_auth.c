@@ -541,7 +541,7 @@ int get_md5_with_cache(socks_worker_process_t *process, socks_order_t *order, ch
 			return 1;
 		}
 	}
-	get_md5_without_cahce(process, order, orderKey, addr, passwd);
+	get_md5_without_cache(process, order, orderKey, addr, passwd);
    	_add_to_md5_cache(process, order, addr, passwd);
     return 1;
 }
@@ -553,7 +553,7 @@ int update_md5_cache(socks_worker_process_t *process, socks_order_t *order, char
 	node = rb_first( &order->md5_cache );
 	while( node ) {
 
-		get_md5_without_cahce(process, order, orderKey, addr, node->data);
+		get_md5_without_cache(process, order, orderKey, addr, node->data);
 		node = rb_next(node);
 		
 	}
