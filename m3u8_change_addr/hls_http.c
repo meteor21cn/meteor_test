@@ -9,9 +9,11 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <string.h>
 #include <assert.h>
 //#include "curl.h"
 #include "hls_http.h"
+#include "http.h"
 //#include "msg.h"
 //#include "misc.h"
 #include "lib/md5c.c"
@@ -31,46 +33,55 @@ struct meteorq
     char original_domain[MAXSIZE];
     char dir_1st[MAXSIZE];
 };
+typedef struct {
+    char *str;
+    //char *end; //??
+    int length;
+}meteor_str_t;
+
+typedef struct {
+    char *start;
+    char *pos;   
+    int   len;
+}url_buf_t;
+
+typedef struct {
+    u_char *start; // start of buf
+    u_char *end;  // end of buf
+
+    u_char *parsed1; //  parsed+1
+    u_char *recved1;
+}recv_buf_t;
+
+typedef struct {
+    u_char *start;
+    u_char *end;
+
+    u_char *parsed1;
+    u_char *send;
+}chgAddr_buf_t;
+
+typedef struct {
+    int at_flag;
+    int domain_flag;
+    int auth_mode;
+
+    //HEX(MD5(...))
+    char *order_token;
+    char *original_host;
+    char *order_key;
+   
+    char *meteor_host;
 
 
-// use sscanf ???
-/*
-   对于http反向代理来说，如果客户端想要访问如下原始请求时： 
-http://orignal-host/ORIGNAL_URI?queryString
-合作方的服务端获取订单的相关信息，并生成反向代理地址,客户端从合作方的服务端获取反向代理地址，然后向流星网关发起请求：
-http://meteor-host:port/meteor-req/orignal-host/ORIGNAL_URI?queryString
-流星网关收到请求后，再去请求http://orignal-host/ORIGNAL_URI?queryString
+    char *m3u8_file_dir;
+    char *fixed_part; // first: "http://meteor-host/meteorq.2.1.1.order_token|appID|" 
 
-流星网关的请求和鉴权信息meteor-req是以指定格式追加到原始url的前面位置。其中，meteor-req格式为：
-meteorq.at-flag.domain-flag.auth-mode.auth-info
-其中各部分之间用“.”隔开，各项含义如下：
-标识串：固定为meteorq（小写）
-地址转换标识(at-flag): 
-0不转换，1只转换与当前请求的1级栏目相同的地址；2只转换与当前请求相同域名的地址；3只转换与当前请求相同父域名的地址；4转换全部可能的网址，包括外链。
-域名转换标识(domain-flag): 0不转换，1转换域名；该标识只有当at-flag为非零时才有意义。 
-鉴权模式（auth-mode）：后续可扩展其他模式，当前先实现默认模式1，其对应的鉴权信息auth-info格式为：
-订单token：默认为订单id；
-app标识：如安卓系统中的app包名或ios系统中为bundleid
-passwd：鉴权密码，算法为：HEX（MD5（token|orignal-host|orderKey））。注：采用orignal-host而没采用ORIGNAL_URI,是考虑到地址转换的性能。
+    url_buf_t buf;
 
-传递cookie有2种方案选择：
-1）合作方在适当的情况下，修改自有程序，用url参数来替代cookie；
-2）合作方如果在第一种方案不可行或难度太大的情况下，合作方可将domain-flag设为1，流星网关将根据网址中的域名查找事先配置的对应代理域名
-（此域名通常为网址中的域名的子域名）
-作为meteor-host进行地址转换，以便实现cookie的有效传递。但合作方需在程序中不使用js等脚本动态生成URL。
-*/
-
-/*
-   int rewrite_cycle()
-   {
-
-   while(1) {
-
-   }
-
-   return 1;
-   }
-   */
+    char *m3u8_dir1st;  // if at_flag:1
+    //char *host_corp;    // if at_flag:3   
+}chgAddr_info_t;
 
 static char *c_name[]={
     "com",
@@ -152,28 +163,6 @@ done:
     }
 }
 
-int pocceess_from_stream(char *stream, char *str, struct hls_media_playlist *me)
-{
-    int n = strlen(stream);
-    while(stream[n] != '\n' && n >= 0)
-    {
-        //...
-        n--;
-    }
-    if(n >= 0)
-    {
-        stream[n] = '\0';
-        strcat(str, stream);
-        strcpy(me->source, str);
-        strcpy(str, "");
-    }
-    strcat(str, &stream[n+1]);
-
-    return 1;
-}
-
-
-
 int get_meteorq(char *proxy_url, struct meteorq *extension)
 {
     //char *proxy_url = "http://meteorq.1.2.abjkjkjkdfjkjk";
@@ -242,50 +231,90 @@ int rewrite_meteorq(char *token, char *addr, char *key, struct meteorq *extensio
     return 1;
 }
 
-int generate_url(char *url, struct meteorq *extension, char *proxy_domain)
+int generate_url(char *url, chgAddr_info_t *info)
 {
-    char temp[MAXSIZE];
-    strcpy(temp, "http://");
-    strcat(temp, proxy_domain);
 
-    //rewrite_meteorq(extension);
+#if 0
+    char newUrl[MAXSIZE];
+    char *src,*dst;
+    //  "http://"
+    strcpy(newUrl,"http://");
 
-    strcat(temp, extension->str);  // 
-    strcat(temp, url + 7); // strstr MUST NOT NULL ------------
-    strcpy(url, temp);
+    //  "proxy-host/"
+    for(src = h_req_info->host_start,dst = newUrl+7;
+        src <= h_req_info->host_end;
+        src++,dst++) {
+        *dst = *src;
+    }
+    *dst++ = '/';
+
+    //  "meteorq.2.1.1.orderToken_appID_******/"
+    for(src = h_req_info->meteorq_start;
+        src <= h_req_info->auth_info_app_end;
+        src++,dst++) {
+        *dst = *src;
+    }
+#endif
+    /*TODO: passwd:HEX(MD5(OrderToken|orignal_host|orderKey)) */
+    char *src,*dst;
+
+    char *passwd = "THIS_IS_PASSWD"; 
+
+    for(dst=info->buf.pos,src=passwd;*src != '\0';*dst++ = *src++);
+    *dst++ = '/';
+
+    //  "original-host/path_to_file" 
+    strcpy(dst, url + 7); // no "http://"
+
+    strcpy(url, info->buf.start);
 }
 
-int generate_url_from_relative(char *url, struct meteorq *extension, char *proxy_domain)
+int generate_url_from_relative(char *url, chgAddr_info_t *info)
 {
-    char temp[MAXSIZE];
-    strcpy(temp, "http://");
-    strcat(temp, proxy_domain);
+#if 0
+    char newUrl[MAXSIZE];
+    //  "http://"
+    strcpy(newUrl,"http://");
 
-    //rewrite_meteorq(extension);
+    //  "proxy-host/"
+    for(src = h_req_info->host_start,dst = newUrl+7;
+        src <= h_req_info->host_end;
+        src++,dst++) {
+        *dst = *src;
+    }
+    *dst++ = '/';
 
-    strcat(temp, extension->str);
-    strcat(temp, extension->original_domain);
-    if(*url == '/') strcat(temp, "/");
-    else            strcat(temp, "/../");
-    char *urltmp = strstr(url, extension->dir_1st);
-    if(urltmp)
-    {
-        strcat(temp,urltmp);
+    //  "meteorq.2.1.1.orderToken_appID_******/"
+    for(src = h_req_info->meteorq_start;
+        src <= h_req_info->auth_info_app_end;
+        src++,dst++) {
+        *dst = *src;
     }
-    else
+#endif
+    /*TODO: HEX(MD5(OrderToken|orignal_host|orderKey)) */
+    char *src,*dst;
+
+    char *passwd = "THIS_IS_PASSWD"; 
+
+    for(dst=info->buf.pos,src=passwd;*src != '\0';*dst++ = *src++);
+    *dst++ = '/';
+
+    //  "original_host"
+    for(src=info->original_host;*src != '\0';*dst++ = *src++);
+
+    //  "path-to-m3u8-file"
+    if (*url != '/')
     {
-        strcat(temp,url);
+        for(src=info->m3u8_file_dir;*src != '\0';*dst++ = *src++);// "/m3u8_file_Dir/"
     }
-    strcpy(url, temp);
+    strcpy(dst,url);       
+    strcpy(url,info->buf.start);
 }
 
 
 // change *url:  url in m3u8 file? --> http://proxy_domain/meteorq/....
-static int rewrite_url(char **url, char *baseurl, char *proxy_domain)
+static int rewrite_url(char **url_in_file, chgAddr_info_t *info, struct meteor_http_request_s *h_req_info)
 {
-    struct meteorq *extension = (struct meteorq *)malloc(sizeof(struct meteorq));
-    int index = get_meteorq(baseurl, extension);
-
     enum at_flag_type{
         none,
         dir_lst_level,
@@ -294,426 +323,138 @@ static int rewrite_url(char **url, char *baseurl, char *proxy_domain)
         all
     };
 
-    if (!strncmp(*url, "http://", 7)) {
+    //absolute addr
+    if (!strncmp(*url_in_file, "http://", 7)) {
         char url_domain[MAXSIZE];
         char dir_1st[MAXSIZE];
-        sscanf(*url, "http://%[^/]/%[^/]", url_domain, dir_1st);
+        sscanf(*url_in_file, "http://%[^/]/%[^/]", url_domain, dir_1st);
 
-        switch(extension->at_flag) {
+        switch(h_req_info->at_flag) {
             case none:    
                 break;
             case dir_lst_level:
-                // auto-info needs to modify
-                if(!strcmp(extension->dir_1st, dir_1st)) {
-                    generate_url(*url, extension, proxy_domain);
+                //auto-info needs to modify
+                if(!strcmp(info->m3u8_dir1st, dir_1st) && !strcmp(info->original_host, url_domain)) {
+                    generate_url(*url_in_file, info);
                 }            
                 break;
             case domain:
-                if(!strcmp(extension->original_domain, url_domain)) {
-                    generate_url(*url, extension, proxy_domain);
+                if(!strcmp(info->original_host, url_domain)) {
+                    generate_url(*url_in_file, info);
                 }   
                 break;
             case corp:
                 //father domain
                 // if(extension->original_domain == NULL || url_domain == NULL)
                 //   break;
-                if(is_domain_same_corp(extension->original_domain, url_domain)) {
-                    generate_url(*url, extension, proxy_domain);
+                if(is_domain_same_corp(info->original_host, url_domain)) {
+                    generate_url(*url_in_file,info);
                 }
                 break;
             case all:
-                generate_url(*url, extension, proxy_domain);
+                generate_url(*url_in_file, info);
                 break;
             default:
                 return 1;
         }
         return 0;
-    }
-
-    else //if (**url == '/') {
-    {
+    } 
+    else {
         char dir_1st[MAXSIZE];
-        if(**url == '/') sscanf(*url, "/%[^/]", dir_1st);
-        else             sscanf(*url, "%[^/]", dir_1st);
-        switch(extension->at_flag) {
+        if(**url_in_file == '/') sscanf(*url_in_file, "/%[^/]", dir_1st);
+        else             sscanf(*url_in_file, "%[^/]", dir_1st);
+        switch(h_req_info->at_flag) {
             case none:    
                 break;
             case dir_lst_level:
-                if(!strcmp(extension->dir_1st, dir_1st)) {
-                    generate_url_from_relative(*url, extension, proxy_domain);
-                }
-                break;
+                // if(!strcmp(info->original_host, dir_1st)) {
+                //     generate_url_from_relative(*url_in_file, extension, proxy_domain);
+                // }
+                // break;
             case domain:
             case corp:
             case all:
-                generate_url_from_relative(*url, extension, proxy_domain);
+                generate_url_from_relative(*url_in_file,info);
                 break;
             default:
                 return 1;
         }
         return 0;
     }
-
+         
 }
 
-//
-static int extend_url(char **url, const char *baseurl)
+
+
+void init_info(chgAddr_info_t *info, struct meteor_http_request_s *h_req_info)
 {
-    size_t max_length = strlen(*url) + strlen(baseurl) + 10;
+    //flag                         ------------
+    info->at_flag = h_req_info->at_flag;
+    info->domain_flag = h_req_info->domain_flag;
+    info->auth_mode = h_req_info->auth_mode;
 
-    if (!strncmp(*url, "http://", 7) || !strncmp(*url, "https://", 8)) {
-        return 0;
+    //order_token                  ------------
+    info->order_token = "ORDERTOKEN";
+    //original_host                ------------
+    info->original_host = "ORIGINSL_HOST";
+    //order_key                    ------------
+    info->order_key = "ORDER_KEY";
+    //meteor_host                  ------------
+    info->meteor_host = "METEOR_HOST";
+    //m3u8_file_Dir:"/""/DirName/" ------------
+    info->m3u8_file_dir = "/m3u8_file_dir/";
+    //m3u8_dir1st
+    if (info->at_flag == 1)
+        info->m3u8_dir1st = "/m3u8_file_dir/";
+    else
+        info->m3u8_dir1st = NULL;
+
+    //fixed_part:init info->buf    ------------
+    char *src,*dst;
+    //  "http://"
+    dst = info->buf.pos;
+    strcpy(dst,"http://");
+
+    //  "proxy-host/"
+    for(src = h_req_info->host_start,dst += 7;
+        src <= h_req_info->host_end;
+        src++,dst++) {
+        *dst = *src;
     }
+    *dst++ = '/';
 
-    else if (**url == '/') {
-        char *domain = malloc(max_length);
-        strcpy(domain, baseurl);
-
-        if (!sscanf(baseurl, "http://%[^/]", domain)) {
-            sscanf(baseurl, "https://%[^/]", domain);
-        }
-
-        char *buffer = malloc(max_length);
-        snprintf(buffer, max_length, "%s%s", domain, *url);
-        *url = realloc(*url, strlen(buffer) + 1);
-        strcpy(*url, buffer);
-        free(buffer);
-        free(domain);
-        return 0;
+    //  "meteorq.2.1.1.orderToken_appID/"
+    for(src = h_req_info->meteorq_start;
+        src <= h_req_info->auth_info_app_end;
+        src++,dst++) {
+        *dst = *src;
     }
+    info->buf.pos = dst;
 
-    else {
-        // URLs can have '?'. To make /../ work, remove it.
-        char *find_questionmark = strchr(baseurl, '?');
-        if (find_questionmark) {
-            *find_questionmark = '\0';
-        }
+    //*dst = '\0';
+    
 
-        char *buffer = malloc(max_length);
-        snprintf(buffer, max_length, "%s/../%s", baseurl, *url);
-        *url = realloc(*url, strlen(buffer) + 1);
-        strcpy(*url, buffer);
-        free(buffer);
-        return 0;
-    }
+
 }
-
-
-int get_playlist_type(char *source)
+int convert_addr_in_file( recv_buf_t *recv_buf,chgAddr_buf_t *convert_buf,
+    struct meteor_http_request_s *h_req_info,
+    char *orderKey, 
+    char *visit_url_info /* contains:at_flag, domain_flag,domain,dir1st... */)
 {
-    if (strncmp("#EXTM3U", source, 7) != 0) {
-        //MSG_WARNING("Not a valid M3U8 file. Exiting.\n");
-        return -1;
-    }
+    assert(h_req_info->at_flag != 0 && h_req_info->domain_flag != 0);
 
-    if (strstr(source, "#EXT-X-STREAM-INF")) {
-        return 0;
-    }
-
-    return 1;
-}
-
-static int get_link_count(char *src)
-{
-    int linkcount = 0;
-
-    while ((src = (strchr(src, '\n')))) {
-        src++;
-        if (*src == '#') {
-            continue;
-        }
-        if (*src == '\0') {
-            break;
-        }
-        linkcount++;
-    }
-
-    return linkcount;
-}
-
-static int media_playlist_get_media_sequence(char *source)
-{
-    int j = 0;
-    char *p_media_sequence = strstr(source, "#EXT-X-MEDIA-SEQUENCE:");
-
-    if (p_media_sequence) {
-        if (sscanf(p_media_sequence, "#EXT-X-MEDIA-SEQUENCE:%d", &j) != 1) {
-            //MSG_ERROR("Could not read EXT-X-MEDIA-SEQUENCE\n");
-            return 0;
-        }
-    }
-    return j;
-}
-
-static int media_playlist_get_links(struct hls_media_playlist *me, char *proxy_domain)
-{
-    int ms_init = media_playlist_get_media_sequence(me->source);
-    struct hls_media_segment *ms = me->media_segment;
-    char *src = me->source;
-
-    for (int i = 0; i < me->count; i++) {
-        ms[i].url = malloc(strlen(src));
-    }
-
-    for (int i = 0; i < me->count; i++) {
-        while ((src = (strchr(src, '\n')))) {
-            src++;
-            if (*src == '\n') {
-                continue;
-            }
-            if (*src == '#') {
-                continue;
-            }
-            if (*src == '\0') {
-                goto finish;
-            }
-            if (sscanf(src, "%[^\n]", ms[i].url) == 1) {
-                ms[i].sequence_number = i + ms_init;
-                break;
-            }
-        }
-    }
-
-finish:
-    // Extend the individual urls.
-    for (int i = 0; i < me->count; i++) {
-        rewrite_url(&ms[i].url, me->url, proxy_domain);
-        //extend_url(&ms[i].url, me->url);
-    }
-    return 0;
-}
-
-int handle_hls_media_playlist(struct hls_media_playlist *me)
-{
-    //get_data_from_url(me->url, &me->source, NULL, STRING);
-
-    if (get_playlist_type(me->source) != MEDIA_PLAYLIST) {
-        return 1;
-    }
-    me->count = get_link_count(me->source);
-    me->media_segment = malloc(sizeof(struct hls_media_segment) * me->count);
-
-    //    if (media_playlist_get_links(me)) 
-
-    /*{
-    //MSG_ERROR("Could not parse links. Exiting.\n");
-    return 1;
-    }
-    */
-    return 0;
-}
-
-static int master_playlist_get_bitrate(struct hls_master_playlist *ma)
-{
-    struct hls_media_playlist *me = ma->media_playlist;
-
-    char *src = ma->source;
-
-    for (int i = 0; i < ma->count && src; i++) {
-        if ((src = strstr(src, "BANDWIDTH="))) {
-            if ((sscanf(src, "BANDWIDTH=%u", &me[i].bitrate)) == 1) {
-                src++;
-                continue;
-            }
-        }
-    }
-    return 0;
-}
-
-static int master_playlist_get_links(struct hls_master_playlist *ma)
-{
-    struct hls_media_playlist *me = ma->media_playlist;
-    char *src = ma->source;
-
-    for (int i = 0; i < ma->count; i++) {
-        me[i].url = malloc(strlen(src));
-    }
-
-    for (int i = 0; i < ma->count; i++) {
-        while ((src = (strchr(src, '\n')))) {
-            src++;
-            if (*src == '#' || *src == '\n') {
-                continue;
-            }
-            if (*src == '\0') {
-                goto finish;
-            }
-            if (sscanf(src, "%[^\n]", me[i].url) == 1) {
-                break;
-            }
-        }
-    }
-
-finish:
-    for (int i = 0; i < ma->count; i++) {
-        extend_url(&me[i].url, ma->url);
-    }
-    return 0;
-}
-
-int handle_hls_master_playlist(struct hls_master_playlist *ma)
-{
-    ma->count = get_link_count(ma->source);
-    ma->media_playlist = malloc(sizeof(struct hls_media_playlist) * ma->count);
-    if (master_playlist_get_links(ma)) {
-        //MSG_ERROR("Could not parse links. Exiting.\n");
-        return 1;
-    }
-
-    for (int i = 0; i < ma->count; i++) {
-        ma->media_playlist[i].bitrate = 0;
-    }
-
-    if (master_playlist_get_bitrate(ma)) {
-        //MSG_ERROR("Could not parse bitrate. Exiting.\n");
-        return 1;
-    }
-    return 0;
-}
-
-void print_hls_master_playlist(struct hls_master_playlist *ma)
-{
-    int i;
-    //MSG_VERBOSE("Found %d Qualitys\n\n", ma->count);
-    for (i = 0; i < ma->count; i++) {
-        //MSG_PRINT("%d: Bandwidth: %d\n", i, ma->media_playlist[i].bitrate);
-    }
-}
-
-/*
-   int download_hls(struct hls_media_playlist *me)
-   {
-//MSG_VERBOSE("Downloading %d segments.\n", me->count);
-
-char filename[MAX_FILENAME_LEN];
-
-if (hls_args.custom_filename) {
-strcpy(filename, hls_args.filename);
-} else {
-strcpy(filename, "000_hls_output.ts");
-}
-
-if (access(filename, F_OK) != -1) {
-if (hls_args.force_overwrite) {
-if (remove(filename) != 0) {
-MSG_ERROR("Error overwriting file");
-exit(1);
-}
-} else {
-char userchoice;
-//MSG_PRINT("File already exists. Overwrite? (y/n) ");
-scanf("\n%c", &userchoice);
-if (userchoice == 'y') {
-if (remove(filename) != 0) {
-//MSG_ERROR("Error overwriting file");
-exit(1);
-}
-} else {
-//MSG_WARNING("Choose a different filename. Exiting.\n");
-exit(0);
-}
-}
-}
-
-FILE *pFile = fopen(filename, "wb");
-
-for (int i = 0; i < me->count; i++) {
-//MSG_PRINT("Downloading part %d\n", i);
-struct ByteBuffer seg;
-seg.len = (int)get_data_from_url(me->media_segment[i].url, NULL, &(seg.data), BINARY);
-fwrite(seg.data, 1, seg.len, pFile);
-free(seg.data);
-}
-fclose(pFile);
-return 0;
-}
-*/
-
-void media_playlist_cleanup(struct hls_media_playlist *me)
-{
-    free(me->source);
-    free(me->url);
-    for (int i = 0; i < me->count; i++) {
-        free(me->media_segment[i].url);
-    }
-    free(me->media_segment);
-}
-
-void master_playlist_cleanup(struct hls_master_playlist *ma)
-{
-    free(ma->source);
-    free(ma->url);
-    free(ma->media_playlist);
-}
-
-
-typedef struct {
-    u_char *start; // start of buf
-    u_char *end;  // end of buf
-
-    u_char *parsed1; //  parsed+1
-    u_char *recved1;
-}recv_buf_t;
-
-typedef struct {
-    u_char *start;
-    u_char *end;
-
-    u_char *parsed1;
-    u_char *send;
-}chgAddr_buf_t;
-
-
-int convert_addr_in_file( recv_buf_t *recv_buf,chgAddr_buf_t *convert_buf,char *visit_url_info /* contains:at_flag, domain_flag,domain,dir1st... */)
-{
-    //ASSERT(DOMAIN_FLAG != 0 && AT_FLAG != 0);
-<<<<<<< HEAD
-    u_char *const recved1 = recv->recved1;
-    u_char *pos = recv->parsed1;  // |<-- parsed -->| parsed1..recved1 | .. end|
-    u_char *line_start,*line_end;
-
-    *recved1 = '\n';
-    for(;pos < recved1;) 
-    {
-        //should assert(handle->pos < handle->end)
-        line_start = pos;            
-        line_end = strchr(pos/*line_start*/,'\n'); //   LINE_END or RECVED1 or NULL(EOF?) 
-
-        if ( line_end == recved1 ||  // NOT COMPLETED LINE
-                line_end ?     //COMPLETED LINE
-                ( handle->end - handle->pos < line_end - line_start ) :    //A REAL_LINE
-                ( handle->end - handle->pos < strlen(pos) ) )              //EOF? '\0'
-        {
-            if(line_end - line_start > 4096/2) //如何判断单行过长？？
-                return -1; //bug：若单行过长, 则无法按行解析，需设置一个长度值；
-            break;  //若没有 足.够.的.缓存处理 完.整.的.一行数据，则parse end
-        }
-
-        if( *pos == '#')
-        {
-            do {
-                *handle->pos++ = *pos++; 
-            }while(*pos != '\n');   // the *recv->recved1 should be '\n'
-        }
-        else if ( *pos == '\n' || *pos == '\r' || *pos == ' ' || *pos == '\t')
-        {                    
-            *handle->pos++ = *pos++; 
-        }
-        else
-        {
-            char url_in_file[666] ;    //.....temp....
-            if ( sscanf(pos,"%[^\n]",url_in_file) ) //  https://???-----------
-            {
-#define AT_FLAG "3"    // 0 no change 1 dir1  2 domain 3 parent domain 4 all
-#define DOMAIN_FLAG "1" // 0 no 1 yes
-#define AUTH_MODE  "1"  
-
-=======
     u_char *const recved1 = recv_buf->recved1;
     u_char *const c_end = convert_buf->end;
-    u_char *r_pos = recv_buf->parsed1; 	 // |<-- parsed -->| parsed1..recved1 | .. end|
+    u_char *r_pos = recv_buf->parsed1; 	 // |<-- parsed -->| parsed1..recved1 | .. end |
     u_char *c_pos = convert_buf->parsed1;
     u_char *line_start,*line_end;
+    
+    char url_buf[MAXSIZE];
+    chgAddr_info_t info;
+    info.buf.start = info.buf.pos = &url_buf[0];
+    info.buf.len = MAXSIZE;
+
+    init_info(&info,h_req_info);
 
     *recved1 = '\n';
     for(;r_pos < recved1;) 
@@ -744,69 +485,27 @@ int convert_addr_in_file( recv_buf_t *recv_buf,chgAddr_buf_t *convert_buf,char *
         }
         else
         {
-            char url_in_file[666] ;    //.....temp....
+            char url_in_file[MAXSIZE] ;    //.....temp....
             if ( sscanf(r_pos,"%[^\n]",url_in_file) ) //  https://???-----------
             {
-#define AT_FLAG "3"    // 0 no change 1 dir1  2 domain 3 parent domain 4 all
-#define DOMAIN_FLAG "1" // 0 no 1 yes
-#define AUTH_MODE  "1"  
-
->>>>>>> 93e1af9125058362c67dc531fbcfe11b9a0b9d43
-                char *url = url_in_file;
-                char *base_url = "/meteorq."AT_FLAG"."DOMAIN_FLAG"."AUTH_MODE
-                    ".auth-info-token-appid-passwd/www.example.com/dir1/ORGRINAL-URI";
-                char *proxy_domain = "meteor-host";
-
-                rewrite_url(&url, base_url, proxy_domain);
-
-                //printf("url:%s\n============\n",url_in_file);
-
-                int len = strlen(url);
-<<<<<<< HEAD
-                if ( len < ( handle->end - handle->pos))
-                {
-                    strcpy(handle->pos,url);
-                    handle->pos += len;
-                    pos = line_end;
-=======
+                char *url_f = url_in_file;
+                rewrite_url(&url_f, &info, h_req_info);
+                int len = strlen(url_f);
                 if ( len < ( c_end - c_pos))
                 {
-                    strcpy(c_pos,url);
+                    strcpy(c_pos,url_f);
                     c_pos += len;
                     r_pos = line_end;
->>>>>>> 93e1af9125058362c67dc531fbcfe11b9a0b9d43
                 }
                 else
                 {
                     break;
                 }
-
-#undef AT_FLAG
-#undef DOMAIN_FLAG
-#undef AUTH_MODE
-            }
-            else
-            {
-                //relative url? https? others? copy ?-----------------
-                do {
-<<<<<<< HEAD
-                    *handle->pos++ = *pos++; 
-                }while(*pos != '\n');   // the *recv->recved1 should be '\n'              
-=======
-                    *c_pos++ = *r_pos++; 
-                }while(*r_pos != '\n');   // the *recv_buf->recved1 should be '\n'              
->>>>>>> 93e1af9125058362c67dc531fbcfe11b9a0b9d43
             }
         }
     }
-
-<<<<<<< HEAD
-    recv->parsed1 = pos;
-=======
     recv_buf->parsed1 = r_pos;
     convert_buf->parsed1 = c_pos;
->>>>>>> 93e1af9125058362c67dc531fbcfe11b9a0b9d43
-    // handle->pos,end,start,last = ???
     return 0;
 }
 
@@ -853,6 +552,30 @@ int main()
     h.send = parse_buf;
     h.end = parse_buf + sizeof(parse_buf) - 1;
 
+    char test_info[]=
+        "GET http://meteor-host/meteorq.2.1.2.001|qq.com.com|d29adac2bdc027497fa3a327d8566320/www.example.com/music/winter-is-cold.m3u8 HTTP/1.1"; 
+    struct meteor_http_request_s test_h_req;
+
+    //char buf[MAXSIZE]="GET http://172.18.12.18/meteorq.0.0.2.001"
+    //"|qq.com.com|d29adac2bdc027497fa3a327d8566320/127.0.0.1:9999"
+    //" HTTP/1.1\r\nContent-length:8888\r\nUser-Agent: Mozilla/5.0"
+    //" (X11; Linux x86_64; rv:38.0) Gecko/20100101 Firefox/38.0 Iceweasel/38.8.0\r\nHost: www.baidu.com:443\r\nProxy-Connection: keep-alive\r\nConnection: keep-alive\r\n\r\n";
+    
+    memset(&test_h_req, 0, sizeof(struct meteor_http_request_s));
+    int length=strlen(test_info);
+    int ret = meteor_http_parse_request_line(test_info,length,&test_h_req);
+
+    /*test_h_req.at_flag = 2;
+    test_h_req.domain_flag = 1;
+    test_h_req.auth_mode = 1;
+
+    test_h_req.host_start = strstr(test_info,"meteor-host");
+    test_h_req.host_end = strstr(test_info,"t/meteorq");
+    test_h_req.meteorq_start = strstr(test_info,"meteorq");
+
+    test_h_req.real_uri_start = strstr(test_info,"www.example.com");
+    test_h_req.real_uri_end = test_info + strlen(test_info); */
+
     for(;;)
     {
         // reset r.pos r.recved1
@@ -884,18 +607,7 @@ int main()
             exit(1);
         }
 
-<<<<<<< HEAD
-        chgAddr_long_file(&r,&h,NULL); // 逐行处理
-
-        // send the parsed
-        u_char *c = h.start;
-        for(;c<h.pos;c++)
-            putchar(*c); // send -> | start -> pos|....
-
-        //reset h.send,h.pos after sented
-        h.pos = h.start;   
-=======
-        convert_addr_in_file(&r,&h,NULL); // 逐行处理
+        convert_addr_in_file(&r,&h,&test_h_req,"ORDERKEY",NULL); // 逐行处理
 
         // send the parsed
         u_char *c = h.start;
@@ -904,10 +616,10 @@ int main()
 
         //reset h.send,h.pos after sented
         h.parsed1 = h.start;   
->>>>>>> 93e1af9125058362c67dc531fbcfe11b9a0b9d43
     }
 
     exit(1);
+    #if 0
     //printf("%s\n",input);
     char myurl[][4096]= {
         "http://www.example.com/low.m3u8",
@@ -945,4 +657,5 @@ int main()
     //free(input);
     //fclose(fp);
     return 0;
+    #endif
 }
