@@ -2,11 +2,11 @@ LDFLAGS = -lhiredis -lpthread -lm
 LIB = ../lib/
 OBJECTS = meteor.o sockd.o sockd_udp.o sockd_tcp.o sockd_auth.o order.o rbtree.o \
 		redis.o md5c.o log.o meteor_process.o  meteor_conf.o http_proxy.o \
-		http_auth.o meteor_auth.o http_parse.o rewrite_url.o
+		http_auth.o meteor_auth.o 
 
 all:meteor rewrite_url.o
 meteor : ${OBJECTS}
-	cc -o  meteor -g ${OBJECTS} ${LDFLAGS} 
+	cc -o  meteor -pg ${OBJECTS} ${LDFLAGS} 
 
 meteor.o:meteor.c meteor.h
 	cc -c  -g meteor.c
@@ -25,7 +25,7 @@ sockd_auth.o: sockd_auth.c sockd_auth.h
 
 order.o: order.c order.h
 	cc -c -g order.c
-
+	
 rewrite_url.o:rewrite_url.c rewrite_url.h
 	cc -c -g rewrite_url.c
 
@@ -55,9 +55,6 @@ http_proxy.o:http_proxy.c http_proxy.h
 
 http_auth.o:http_auth.c http_auth.h
 	cc -c -g http_auth.c
-
-http_parse.o:http_parse.c http_parse.h
-	cc -c -g http_parse.c
 
 .PHONY:clean
 
