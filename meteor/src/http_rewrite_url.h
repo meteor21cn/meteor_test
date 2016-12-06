@@ -1,5 +1,5 @@
-#ifndef _REWRITE_URL_H_
-#define _REWRITE_URL_H_
+#ifndef _HTTP_REWRITE_URL_H_
+#define _HTTP_REWRITE_URL_H_
 
 int rewrite_url_in_file( socks_worker_process_t *process, socks_connection_t *con,http_response_t * response );
 
