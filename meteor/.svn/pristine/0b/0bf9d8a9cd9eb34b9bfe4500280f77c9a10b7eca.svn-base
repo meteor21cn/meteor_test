@@ -655,18 +655,3 @@ int update_md5_cache(socks_worker_process_t *process, socks_order_t *order) {
 	}
 	return 1;
 }
-
-int destroy_md5_cache(socks_worker_process_t *process, socks_order_t *order) {
-
-	struct rb_node *node;
-	char *orderKey = order->order_key;
-	node = rb_first( &order->md5_cache );
-	while( node ) {
-		if(node->data) {
-			free(node->data);
-		}
-		node = rb_next(node);
-	}
-	rb_tree_destory( &order->md5_cache, NULL );
-	return 1;
-}

@@ -25,6 +25,7 @@
 #define SOCKS_AUTH_FLOW_PACKAGE		0x81
 #define SOCKS_AUTH_NOT_ACCEPTABLE	0xFF
 
+#define AUTH_FAIL_TIMES_THRESHOLD	15
 
 struct socks_auth_req_s 
 {
