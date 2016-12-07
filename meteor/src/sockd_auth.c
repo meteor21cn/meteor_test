@@ -18,7 +18,7 @@ static int _socks_check_passwd(unsigned char *token, unsigned char *addr, unsign
 socks_auth_reply_t *do_first_auth( socks_worker_process_t *process, socks_connection_t *con, socks_auth_req_t *req, socks_auth_reply_t *reply )
 {
 	if ( _copy_req_to_session(con->session, req )< 0){
-		// userå’Œpasswdä¸åˆåè®®è§„èŒƒï¼Œè®¤ä¸ºé‰´æƒä¸é€šè¿‡
+		// userºÍpasswd²»ºÏĞ­Òé¹æ·¶£¬ÈÏÎª¼øÈ¨²»Í¨¹ı
 		reply->status = SOCKS_AUTH_ERR_NO_PASS;
 		return reply;
 	}
@@ -32,7 +32,7 @@ socks_auth_reply_t *do_first_auth( socks_worker_process_t *process, socks_connec
 	rb_node_t *node, *next;
 	key.pkey = con->session->token;
 	node = rb_tree_search( &process->order_cache, &key );
-	// åœ¨æœ¬æœºç¼“å­˜å·²ç»å­˜åœ¨
+	// ÔÚ±¾»ú»º´æÒÑ¾­´æÔÚ
 	if( node ){
 		order = (socks_order_t *)node->data;
 		if( !order ){
@@ -41,7 +41,7 @@ socks_auth_reply_t *do_first_auth( socks_worker_process_t *process, socks_connec
 		}
 
 		if( order->order_key_endtime < now ){
-			// keyè¿‡æœŸï¼Œé‡æ–°ä»redisè¯»å–
+			// key¹ıÆÚ£¬ÖØĞÂ´Óredis¶ÁÈ¡
 			reply->status = get_order_data_from_redis( process->redis_connect, order, con->session->token );
 			if( reply->status != SOCKS_AUTH_SUCCESS){
 				reply->order_status = order->order_status;
@@ -52,7 +52,7 @@ socks_auth_reply_t *do_first_auth( socks_worker_process_t *process, socks_connec
 			}
 		}
 
-		//æ£€æŸ¥æ´»åŠ¨çš„çŠ¶æ€ï¼Œå¦‚æœå­˜åœ¨æ´»åŠ¨çš„è¯
+		//¼ì²é»î¶¯µÄ×´Ì¬£¬Èç¹û´æÔÚ»î¶¯µÄ»°
 		reply->status = _socks_check_activity_if_exist(  process, order, reply, now);
 		if( reply->status != SOCKS_AUTH_SUCCESS ){
 			reply->order_balance = order->order_balance;
@@ -61,7 +61,7 @@ socks_auth_reply_t *do_first_auth( socks_worker_process_t *process, socks_connec
 			return reply;
 		}
 
-		// åˆ¤æ–­è®¢å•çŠ¶æ€
+		// ÅĞ¶Ï¶©µ¥×´Ì¬
 		reply->status = _socks_check_order( process, order, con->session, now );
 		if( reply->status == SOCKS_AUTH_SUCCESS || reply->status == SOCKS_AUTH_ERR_ORDER_STATUS ){
 			con->session->order = order;
@@ -72,13 +72,13 @@ socks_auth_reply_t *do_first_auth( socks_worker_process_t *process, socks_connec
 		}
 
 		if( reply->status == SOCKS_AUTH_SUCCESS ){
-			//å»ºç«‹sessionå’Œorderçš„å…³è”å…³ç³»
+			//½¨Á¢sessionºÍorderµÄ¹ØÁª¹ØÏµ
 			if( _add_to_session_cache( process, order, con->session )<0 ){
 				reply->status = SOCKS_AUTH_ERR_SYS_BUSY;
 				return reply;
 			}
 
-			// ä¿å­˜åˆ°order timer
+			// ±£´æµ½order timer
 			if( add_order_to_timer_queue( process, order )<0 ){
 				reply->status = SOCKS_AUTH_ERR_SYS_BUSY;
 				return reply;
@@ -89,7 +89,7 @@ socks_auth_reply_t *do_first_auth( socks_worker_process_t *process, socks_connec
 	
 	}
 
-	// æ£€æŸ¥æ˜¯å¦æ˜¯è¿‡æœŸçš„æˆ–æ— æ•ˆçš„tokenï¼Œé¿å…æŸ¥è¯¢redis
+	// ¼ì²éÊÇ·ñÊÇ¹ıÆÚµÄ»òÎŞĞ§µÄtoken£¬±ÜÃâ²éÑ¯redis
 	node = rb_tree_search( &process->invalid_orders, &key);
 	if( node ){
 		order = (socks_order_t *)node->data;
@@ -99,7 +99,7 @@ socks_auth_reply_t *do_first_auth( socks_worker_process_t *process, socks_connec
 		return reply;
 	}
 
-	// æœ¬æœºç¼“å­˜ä¸å­˜åœ¨tokenï¼Œä»redisè¯»å–
+	// ±¾»ú»º´æ²»´æÔÚtoken£¬´Óredis¶ÁÈ¡
 	order = order_pool_pop( process );
 	if( !order ){
 		reply->status = SOCKS_AUTH_ERR_SYS_BUSY;
@@ -108,7 +108,7 @@ socks_auth_reply_t *do_first_auth( socks_worker_process_t *process, socks_connec
 	
 	int pool = order->pool;
 	memset( order, 0, sizeof(order) );
-	order->pool = pool;		// ç¡®ä¿poolçš„æ ‡è¯†ä½ä¸è¢«è¦†ç›–ï¼Œç”¨äºå†…å­˜å›æ”¶å¤„ç†
+	order->pool = pool;		// È·±£poolµÄ±êÊ¶Î»²»±»¸²¸Ç£¬ÓÃÓÚÄÚ´æ»ØÊÕ´¦Àí
 	order->last_update_stamp = now;
 	order->last_data_stamp = now;
 	order->last_chk_stamp = now;
@@ -120,15 +120,15 @@ socks_auth_reply_t *do_first_auth( socks_worker_process_t *process, socks_connec
 		reply->used_today = order->today_used_flow;
 		reply->company_balance = get_balance_of_flow_pool( process, order);
 		order_pool_add( process, order);
-		// æ— æ•ˆtokenï¼ŒåŠ å…¥æ— æ•ˆtokençš„ç¼“å­˜
+		// ÎŞĞ§token£¬¼ÓÈëÎŞĞ§tokenµÄ»º´æ
 		add_order_to_invalid_cache( process, order );
 		return reply;
 	}
 
-	// å¦‚æœæ˜¯æµé‡æ± æ´»åŠ¨ï¼Œè¿›è¡Œåˆå§‹åŒ–ï¼Œå¿½ç•¥åˆå§‹åŒ–å¤±è´¥çš„æƒ…å†µã€‚FIXME?
+	// Èç¹ûÊÇÁ÷Á¿³Ø»î¶¯£¬½øĞĞ³õÊ¼»¯£¬ºöÂÔ³õÊ¼»¯Ê§°ÜµÄÇé¿ö¡£FIXME?
 	_init_activity_if_exist(  process,  order, now);
 
-	//æ£€æŸ¥æ´»åŠ¨çš„çŠ¶æ€ï¼Œå¦‚æœå­˜åœ¨æ´»åŠ¨çš„è¯
+	//¼ì²é»î¶¯µÄ×´Ì¬£¬Èç¹û´æÔÚ»î¶¯µÄ»°
 	reply->status = _socks_check_activity_if_exist(  process, order, reply, now);
 	if( reply->status != SOCKS_AUTH_SUCCESS ){
 		reply->order_balance = order->order_balance;
@@ -139,7 +139,7 @@ socks_auth_reply_t *do_first_auth( socks_worker_process_t *process, socks_connec
 		return reply;
 	}
 
-	// åˆ¤æ–­è®¢å•çŠ¶æ€
+	// ÅĞ¶Ï¶©µ¥×´Ì¬
 	reply->status = _socks_check_order( process, order, con->session, now );
 	if( reply->status == SOCKS_AUTH_SUCCESS || reply->status == SOCKS_AUTH_ERR_ORDER_STATUS ){
 		con->session->order = order;
@@ -154,21 +154,21 @@ socks_auth_reply_t *do_first_auth( socks_worker_process_t *process, socks_connec
 		add_order_to_invalid_cache( process, order );
 		return reply;
 	}
-	//å°†orderæ”¾å…¥processçš„order cache
+	//½«order·ÅÈëprocessµÄorder cache
 	if( _add_to_order_cache( process, order ) <0 ){
 		order_pool_add( process, order);
 		reply->status = SOCKS_AUTH_ERR_SYS_BUSY;
 		return reply;
 	}
 
-	//å»ºç«‹sessionå’Œorderçš„å…³è”å…³ç³»
+	//½¨Á¢sessionºÍorderµÄ¹ØÁª¹ØÏµ
 	if( _add_to_session_cache( process, order, con->session )<0 ){
 		order_pool_add( process, order);
 		reply->status = SOCKS_AUTH_ERR_SYS_BUSY;
 		return reply;
 	}
 
-	// ä¿å­˜åˆ°order timer
+	// ±£´æµ½order timer
 	if( add_order_to_timer_queue( process, order )<0 ){
 		order_pool_add( process, order);
 		reply->status = SOCKS_AUTH_ERR_SYS_BUSY;
@@ -229,7 +229,7 @@ int do_second_auth(socks_worker_process_t *process, socks_connection_t *con, soc
 
 int send_auth_reply( socks_worker_process_t *process, socks_connection_t *con, socks_auth_reply_t *reply )
 {
-	//å› ä¸ºåœ°å€å¯¹é½åŸå› ï¼Œéœ€è¦å•é¡¹copy
+	//ÒòÎªµØÖ·¶ÔÆëÔ­Òò£¬ĞèÒªµ¥Ïîcopy
 	memcpy((void *)&con->buf[0], (void *)reply, 3*sizeof(unsigned char) );
 	con->data_length = 3*sizeof(unsigned char);
 	memcpy((void *)&con->buf[con->data_length], (void *)&reply->order_balance, sizeof(reply->order_balance) );
