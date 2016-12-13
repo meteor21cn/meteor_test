@@ -370,7 +370,7 @@ int http_parse_request_header_line( char *b ,int length, http_request_t  *r)
 				/*if (ch >= 'a' && ch <= 'z'){
 					break;
 					}*/
-				if (ch == '|'){
+				if (ch == '.'){
 					if (r->proxy_mode == HTTP_PROXY_MODE_REVERSE){
 						state = sw_at_flag;
 						break;
@@ -422,7 +422,7 @@ int http_parse_request_header_line( char *b ,int length, http_request_t  *r)
 				*/
 			case sw_at_flag:
 
-				if (ch != '|'){ 
+				if (ch != '.'){ 
 					if(ch >= '0' && ch <='9'){    
 						r->at_flag=b[i] - '0';                   	
 						break;
@@ -433,7 +433,7 @@ int http_parse_request_header_line( char *b ,int length, http_request_t  *r)
 				break;
 			case sw_domian_flag:
 				
-				if (ch != '|'){
+				if (ch != '.'){
 					if(ch >= '0' && ch <='9'){
 						r->domain_flag=b[i] - '0';
 						break;
@@ -445,7 +445,7 @@ int http_parse_request_header_line( char *b ,int length, http_request_t  *r)
 
 			case sw_auth_mode:
 				
-				if (ch != '|'){
+				if (ch != '.'){
 					if(ch >= '0' && ch <='9'){
 						r->auth_mode=b[i] - '0';                     	
 						r->auth_info_token_start=&(b[i+2]);      
@@ -703,7 +703,7 @@ int http_parse_request_header_line( char *b ,int length, http_request_t  *r)
 					
 		}
 	}
-	return HTTP_PARSE_ERROR;
+	return HTTP_PARSE_OK;
 }
 
 int http_parse_request_header_body(char *b ,int length ,http_request_t *r)
@@ -785,7 +785,6 @@ int http_parse_request_header_body(char *b ,int length ,http_request_t *r)
 									return HTTP_PARSE_ERROR;
 
 								}
-								break;
 							case sw_before_port:
 								/*if (ch == ' ')
 								{
@@ -897,7 +896,7 @@ int http_parse_request_header_body(char *b ,int length ,http_request_t *r)
 							state = sw_space_before_auth_mode;
 							break;
 						case sw_space_before_auth_mode:
-							if (ch !='|'){
+							if (ch !='.'){
 								break;
 							}
 						   //r->x_meteorq_start = &(p[i]);
