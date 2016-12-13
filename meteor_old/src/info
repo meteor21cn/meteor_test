@@ -1,0 +1,210 @@
+------------------2
+[1mmain:[0m
+	user            	= 
+	daemon_mode     	= on
+	worker_processes	= 4
+	worker_max_sessions	= 4096
+	pid             	= ../logs/meteor.pid
+[1msys_log:[0m
+	mode            	= file
+	level           	= notice
+	file            	= ../logs/sys.log
+	rotate          	= 1 days(86400000ms)
+[1mflow_log:[0m
+	file            	= ../logs/flow.log
+	rotate          	= 1 hours(3600000ms)
+[1mredis_server:[0m
+	host            	= 127.0.0.1
+	port            	= 6379
+[1mtimer:[0m
+	order_check     	= 5 seconds(5000ms)
+	order_update    	= 5 seconds(5000ms)
+	order_event_check	= 5 seconds(5000ms)
+	order_frozen_timeout	= 3 hours(10800000ms)
+	order_idle_timeout	= 5 minutes(300000ms)
+	session_idle_timeout	= 1 minutes(60000ms)
+	activity_update 	= 5 seconds(5000ms)
+	activity_check  	= 5 seconds(5000ms)
+	pool_defrag     	= 1 minutes(60000ms)
+	pool_defrag_size	= 100
+	worker_stat_update	= 5 seconds(5000ms)
+[1mworker[0]:[0m
+	name            	= 
+	outer_host      	= 10.0.2.15
+	listen_port     	= 8001
+	backlog         	= 4096
+	recv_buf        	= (default)
+	send_buf        	= (default)
+	reuseaddr       	= 1
+	keepalive       	= (default)
+	max_sessions    	= 4096
+[1mworker[1]:[0m
+	name            	= 
+	outer_host      	= 10.0.2.15
+	listen_port     	= 8002
+	backlog         	= 4096
+	recv_buf        	= (default)
+	send_buf        	= (default)
+	reuseaddr       	= 1
+	keepalive       	= (default)
+	max_sessions    	= 4096
+[1mworker[2]:[0m
+	name            	= 
+	outer_host      	= 10.0.2.15
+	listen_port     	= 8003
+	backlog         	= 4096
+	recv_buf        	= (default)
+	send_buf        	= (default)
+	reuseaddr       	= 1
+	keepalive       	= (default)
+	max_sessions    	= 4096
+[1mworker[3]:[0m
+	name            	= 
+	outer_host      	= 10.0.2.15
+	listen_port     	= 8004
+	backlog         	= 4096
+	recv_buf        	= (default)
+	send_buf        	= (default)
+	reuseaddr       	= 1
+	keepalive       	= (default)
+	max_sessions    	= 4096
+------------------3
+[1mmain:[0m
+	user            	= 
+	daemon_mode     	= on
+	worker_processes	= 4
+	worker_max_sessions	= 4096
+	pid             	= ../logs/meteor.pid
+[1msys_log:[0m
+	mode            	= file
+	level           	= notice
+	file            	= ../logs/sys.log
+	rotate          	= 1 days(86400000ms)
+[1mflow_log:[0m
+	file            	= ../logs/flow.log
+	rotate          	= 1 hours(3600000ms)
+[1mredis_server:[0m
+	host            	= 127.0.0.1
+	port            	= 6379
+[1mtimer:[0m
+	order_check     	= 5 seconds(5000ms)
+	order_update    	= 5 seconds(5000ms)
+	order_event_check	= 5 seconds(5000ms)
+	order_frozen_timeout	= 3 hours(10800000ms)
+	order_idle_timeout	= 5 minutes(300000ms)
+	session_idle_timeout	= 1 minutes(60000ms)
+	activity_update 	= 5 seconds(5000ms)
+	activity_check  	= 5 seconds(5000ms)
+	pool_defrag     	= 1 minutes(60000ms)
+	pool_defrag_size	= 100
+	worker_stat_update	= 5 seconds(5000ms)
+[1mworker[0]:[0m
+	name            	= 
+	outer_host      	= 10.0.2.15
+	listen_port     	= 8001
+	backlog         	= 4096
+	recv_buf        	= (default)
+	send_buf        	= (default)
+	reuseaddr       	= 1
+	keepalive       	= (default)
+	max_sessions    	= 4096
+[1mworker[1]:[0m
+	name            	= 
+	outer_host      	= 10.0.2.15
+	listen_port     	= 8002
+	backlog         	= 4096
+	recv_buf        	= (default)
+	send_buf        	= (default)
+	reuseaddr       	= 1
+	keepalive       	= (default)
+	max_sessions    	= 4096
+[1mworker[2]:[0m
+	name            	= 
+	outer_host      	= 10.0.2.15
+	listen_port     	= 8003
+	backlog         	= 4096
+	recv_buf        	= (default)
+	send_buf        	= (default)
+	reuseaddr       	= 1
+	keepalive       	= (default)
+	max_sessions    	= 4096
+[1mworker[3]:[0m
+	name            	= 
+	outer_host      	= 10.0.2.15
+	listen_port     	= 8004
+	backlog         	= 4096
+	recv_buf        	= (default)
+	send_buf        	= (default)
+	reuseaddr       	= 1
+	keepalive       	= (default)
+	max_sessions    	= 4096
+------------------4
+[1mmain:[0m
+	user            	= 
+	daemon_mode     	= on
+	worker_processes	= 4
+	worker_max_sessions	= 4096
+	pid             	= ../logs/meteor.pid
+[1msys_log:[0m
+	mode            	= file
+	level           	= notice
+	file            	= ../logs/sys.log
+	rotate          	= 1 days(86400000ms)
+[1mflow_log:[0m
+	file            	= ../logs/flow.log
+	rotate          	= 1 hours(3600000ms)
+[1mredis_server:[0m
+	host            	= 127.0.0.1
+	port            	= 6379
+[1mtimer:[0m
+	order_check     	= 5 seconds(5000ms)
+	order_update    	= 5 seconds(5000ms)
+	order_event_check	= 5 seconds(5000ms)
+	order_frozen_timeout	= 3 hours(10800000ms)
+	order_idle_timeout	= 5 minutes(300000ms)
+	session_idle_timeout	= 1 minutes(60000ms)
+	activity_update 	= 5 seconds(5000ms)
+	activity_check  	= 5 seconds(5000ms)
+	pool_defrag     	= 1 minutes(60000ms)
+	pool_defrag_size	= 100
+	worker_stat_update	= 5 seconds(5000ms)
+[1mworker[0]:[0m
+	name            	= 
+	outer_host      	= 10.0.2.15
+	listen_port     	= 8001
+	backlog         	= 4096
+	recv_buf        	= (default)
+	send_buf        	= (default)
+	reuseaddr       	= 1
+	keepalive       	= (default)
+	max_sessions    	= 4096
+[1mworker[1]:[0m
+	name            	= 
+	outer_host      	= 10.0.2.15
+	listen_port     	= 8002
+	backlog         	= 4096
+	recv_buf        	= (default)
+	send_buf        	= (default)
+	reuseaddr       	= 1
+	keepalive       	= (default)
+	max_sessions    	= 4096
+[1mworker[2]:[0m
+	name            	= 
+	outer_host      	= 10.0.2.15
+	listen_port     	= 8003
+	backlog         	= 4096
+	recv_buf        	= (default)
+	send_buf        	= (default)
+	reuseaddr       	= 1
+	keepalive       	= (default)
+	max_sessions    	= 4096
+[1mworker[3]:[0m
+	name            	= 
+	outer_host      	= 10.0.2.15
+	listen_port     	= 8004
+	backlog         	= 4096
+	recv_buf        	= (default)
+	send_buf        	= (default)
+	reuseaddr       	= 1
+	keepalive       	= (default)
+	max_sessions    	= 4096

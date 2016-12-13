@@ -1,0 +1,14 @@
+#!/bin/bash
+
+gdb<<EOF
+file meteor
+start
+p read_config("../conf/meteor.conf",&g_config)
+p g_config
+
+
+
+
+
+q
+EOF

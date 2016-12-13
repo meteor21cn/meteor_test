@@ -1,0 +1,5 @@
+
+file meteor
+set follow-fork-mode child
+b rewrite_url_in_file
+r

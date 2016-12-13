@@ -1,0 +1,450 @@
+#include "meteor.h"
+#include "sockd.h"
+#include "order.h"
+#include "sockd_auth.h"
+#include "sockd_redis.h"
+#include "meteor_auth.h"
+#include "http_auth.h"
+#include "http_proxy.h"
+
+static http_proxy_response_t * _http_passwd_auth(socks_worker_process_t *process, socks_connection_t *con,
+	http_info_t *http_info, http_proxy_response_t *response);
+
+static int _copy_http_info_to_session(socks_session_t * session, http_request_t *request);
+
+static int _check_at_flag_avai(http_info_t *http_info);
+
+static int _http_passwd_check(socks_worker_process_t *process, socks_connection_t *con, 
+	http_info_t *http_info, http_proxy_response_t *response );
+
+static int _http_check_passwd(unsigned char *token, unsigned char *addr, unsigned char *key, unsigned char *passwd);
+
+static int _http_check_order( socks_worker_process_t *process, socks_order_t *order, socks_session_t *session, long nowms );
+
+static int _http_check_activity_if_exist( socks_worker_process_t *process, socks_order_t *order, http_proxy_response_t *response, long nowms );
+
+
+http_proxy_response_t * http_auth(socks_worker_process_t *process, socks_connection_t *con,
+	http_info_t *http_info, http_proxy_response_t *response)
+{
+	if ( _copy_http_info_to_session(con->session, &http_info->request )< 0){
+		// userºÍpasswd²»ºÏÐ­Òé¹æ·¶£¬ÈÏÎª¼øÈ¨²»Í¨¹ý
+		response->status = HTTP_AUTH_ERR_AUTH_FAILED;
+		return response;
+	}
+	sys_log(LL_DEBUG, "[ %s:%d ] token:%s, app:%s, passwd:%s", __FILE__, __LINE__, con->session->token, con->session->app_pname, con->session->passwd );
+
+	if (_check_at_flag_avai( http_info) < 0){
+		response->status = HTTP_AUTH_ERR_AT_FLAG;
+		sys_log(LL_DEBUG, "[ %s:%d ] error at_flag: %d, domain_flag: %d", __FILE__, __LINE__,  http_info->request.at_flag, http_info->request.domain_flag);
+		return response;
+	}
+
+	switch(http_info->request.auth_mode)
+	{
+		case HTTP_AUTH_USER_PASSWORD:
+		{
+			_http_passwd_auth(process, con, http_info, response);
+			if (response->status != HTTP_AUTH_SUCCESS){
+				sys_log(LL_DEBUG, "[ %s:%d ] error auth failed ! status: %d", __FILE__, __LINE__,  response->status);
+				return response;
+			}
+
+			_http_passwd_check(process, con, http_info, response);
+			if(response->status != HTTP_AUTH_SUCCESS){
+				sys_log(LL_DEBUG, "[ %s:%d ] error passwd ! status: %d", __FILE__, __LINE__,  response->status);
+				return response;
+			}
+			return response;
+		}
+
+		default :
+		{
+			response->status = HTTP_AUTH_ERR_AUTH_MODE;
+			sys_log(LL_DEBUG, "[ %s:%d ] error auth_mode", __FILE__, __LINE__,  http_info->request.auth_mode);
+			return response;
+		}
+	}
+
+}
+
+static http_proxy_response_t * _http_passwd_auth(socks_worker_process_t *process, socks_connection_t *con,
+	http_info_t *http_info, http_proxy_response_t *response)
+{
+	int closed = 0;
+	long now = get_current_ms();
+	socks_order_t *order = NULL;
+
+	rb_key_t key;
+	rb_node_t *node, *next;
+	key.pkey = con->session->token;
+	node = rb_tree_search( &process->order_cache, &key );
+	// ÔÚ±¾»ú»º´æÒÑ¾­´æÔÚ
+	if( node ){
+		order = (socks_order_t *)node->data;
+		if( !order ){
+			response->status = HTTP_AUTH_ERR_UNKOWN;
+			return response;
+		}
+
+		if( order->order_key_endtime < now ){
+			// key¹ýÆÚ£¬ÖØÐÂ´Óredis¶ÁÈ¡
+			response->status = get_order_data_from_redis( process->redis_connect, order, con->session->token );
+			if( response->status != HTTP_AUTH_SUCCESS){
+				response->order_status = order->order_status;
+				response->order_balance = order->order_balance;
+				response->used_today = order->today_used_flow;
+				response->company_balance = get_balance_of_flow_pool( process, order);
+				return response;
+			}
+		}
+
+		//¼ì²é»î¶¯µÄ×´Ì¬£¬Èç¹û´æÔÚ»î¶¯µÄ»°
+		response->status = _http_check_activity_if_exist(  process, order, response, now);
+		if( response->status != HTTP_AUTH_SUCCESS ){
+			response->order_balance = order->order_balance;
+			response->used_today = order->today_used_flow;
+			response->company_balance = get_balance_of_flow_pool( process, order);
+			return response;
+		}
+
+		// ÅÐ¶Ï¶©µ¥×´Ì¬
+		response->status = _http_check_order( process, order, con->session, now );
+		if( response->status == HTTP_AUTH_SUCCESS || response->status == HTTP_AUTH_ERR_ORDER_STATUS ){
+			con->session->order = order;
+			response->order_status = order->order_status;
+			response->order_balance = order->order_balance;
+			response->used_today = order->today_used_flow;
+			response->company_balance = get_balance_of_flow_pool( process, order);
+		}
+
+		if( response->status == HTTP_AUTH_SUCCESS ){
+			//½¨Á¢sessionºÍorderµÄ¹ØÁª¹ØÏµ
+			if( _add_to_session_cache( process, order, con->session )<0 ){
+				response->status = HTTP_AUTH_ERR_SYS_BUSY;
+				return response;
+			}
+
+			// ±£´æµ½order timer
+			if( add_order_to_timer_queue( process, order )<0 ){
+				response->status = HTTP_AUTH_ERR_SYS_BUSY;
+				return response;
+			}
+		}
+		
+		del_from_new_session_cache( process, con->session );
+
+		return response;
+	}
+
+	// ¼ì²éÊÇ·ñÊÇ¹ýÆÚµÄ»òÎÞÐ§µÄtoken£¬±ÜÃâ²éÑ¯redis
+	node = rb_tree_search( &process->invalid_orders, &key);
+	if( node ){
+		order = (socks_order_t *)node->data;
+		if( order )
+			order->last_update_stamp = now;
+		response->status = HTTP_AUTH_ERR_NO_FOUND;
+		return response;
+	}
+
+	// ±¾»ú»º´æ²»´æÔÚtoken£¬´Óredis¶ÁÈ¡
+	order = order_pool_pop( process );
+	if( !order ){
+		response->status = HTTP_AUTH_ERR_SYS_BUSY;
+		return response;
+	}
+	
+	int pool = order->pool;
+	memset( order, 0, sizeof(order) );
+	order->pool = pool;		// È·±£poolµÄ±êÊ¶Î»²»±»¸²¸Ç£¬ÓÃÓÚÄÚ´æ»ØÊÕ´¦Àí
+	order->last_update_stamp = now;
+	order->last_data_stamp = now;
+	order->last_chk_stamp = now;
+	
+	response->status = get_order_data_from_redis( process->redis_connect, order, con->session->token );
+	if( response->status != HTTP_AUTH_SUCCESS ){
+		response->order_status = order->order_status;
+		response->order_balance = order->order_balance;
+		response->used_today = order->today_used_flow;
+		response->company_balance = get_balance_of_flow_pool( process, order);
+		order_pool_add( process, order);
+		// ÎÞÐ§token£¬¼ÓÈëÎÞÐ§tokenµÄ»º´æ
+		add_order_to_invalid_cache( process, order );
+		return response;
+	}
+
+	// Èç¹ûÊÇÁ÷Á¿³Ø»î¶¯£¬½øÐÐ³õÊ¼»¯£¬ºöÂÔ³õÊ¼»¯Ê§°ÜµÄÇé¿ö¡£FIXME?
+	_init_activity_if_exist(  process,  order, now);
+
+	//¼ì²é»î¶¯µÄ×´Ì¬£¬Èç¹û´æÔÚ»î¶¯µÄ»°
+	response->status = _http_check_activity_if_exist(  process, order, response, now);
+	if( response->status != HTTP_AUTH_SUCCESS ){
+		response->order_balance = order->order_balance;
+		response->used_today = order->today_used_flow;
+		response->company_balance = get_balance_of_flow_pool( process, order);
+		order_pool_add( process, order);
+		add_order_to_invalid_cache( process, order );
+		return response;
+	}
+
+	// ÅÐ¶Ï¶©µ¥×´Ì¬
+	response->status = _http_check_order( process, order, con->session, now );
+	if( response->status == HTTP_AUTH_SUCCESS || response->status == HTTP_AUTH_ERR_ORDER_STATUS ){
+		con->session->order = order;
+		response->order_status = order->order_status;
+		response->order_balance = order->order_balance;
+		response->used_today = order->today_used_flow;
+		response->company_balance = get_balance_of_flow_pool( process, order);
+	}
+
+	if( response->status != HTTP_AUTH_SUCCESS ){
+		order_pool_add( process, order);
+		add_order_to_invalid_cache( process, order );
+		return response;
+	}
+	//½«order·ÅÈëprocessµÄorder cache
+	if( _add_to_order_cache( process, order ) <0 ){
+		order_pool_add( process, order);
+		response->status = HTTP_AUTH_ERR_SYS_BUSY;
+		return response;
+	}
+
+	//½¨Á¢sessionºÍorderµÄ¹ØÁª¹ØÏµ
+	if( _add_to_session_cache( process, order, con->session )<0 ){
+		order_pool_add( process, order);
+		response->status = HTTP_AUTH_ERR_SYS_BUSY;
+		return response;
+	}
+
+	// ±£´æµ½order timer
+	if( add_order_to_timer_queue( process, order )<0 ){
+		order_pool_add( process, order);
+		response->status = HTTP_AUTH_ERR_SYS_BUSY;
+		return response;
+	}
+	
+	del_from_new_session_cache( process, con->session );
+	
+	return response;
+}
+
+static int _copy_http_info_to_session(socks_session_t * session, http_request_t *request)
+{
+	int len = request->auth_info_token_end - request->auth_info_token_start + 1;
+	if (len < SESSION_TOKEN_MAX_LEN && len>= SESSION_TOKEN_MIN_LEN + 1){
+		memcpy(session->token, request->auth_info_token_start, len);
+		session->token[len] = '\0';
+	}
+	else
+		return -1;
+
+	len = request->auth_info_app_end - request->auth_info_app_start + 1;
+	if( len <SESSION_APP_PNAME_MAX_LEN && len > 1){
+		memcpy(session->app_pname, request->auth_info_app_start, len);
+		session->app_pname[len] = '\0';
+	}
+	else
+		return -1;
+
+	len = request->auth_info_passwd_end - request->auth_info_passwd_start + 1;
+	if( len <SESSION_PASSWD_MAX_LEN  && len > 1){
+		memcpy(session->passwd, request->auth_info_passwd_start, len);
+		session->passwd[len] = '\0';
+	}
+	else
+		return -1;
+	
+	/*strcpy(session->token, "001");
+	strcpy(session->app_pname,"888");
+	strcpy(session->passwd,"b29adac2bdc027497fa3a327d8566326");*/
+	return 0;
+}
+
+static int _check_at_flag_avai(http_info_t *http_info)
+{
+	switch(http_info->request.at_flag)
+	{
+		case HTTP_AT_FLAG_NONE:
+		{
+			if (http_info->request.domain_flag != HTTP_DOMAIN_FLAG_NONE)
+				return -1;
+			else
+				return 0;
+		}
+
+		case HTTP_AT_FLAG_FIRST_CHILD:
+		case HTTP_AT_FLAG_SAME:
+		case HTTP_AT_FLAG_PARENT:
+		case HTTP_AT_FLAG_ALL:
+		{
+			if (http_info->request.domain_flag != HTTP_DOMAIN_FLAG_REWRITE)
+				return -1;
+			else
+				return 0;
+		}
+
+		default:
+		{
+			return -1;
+		}
+	}
+}
+
+static int _http_passwd_check(socks_worker_process_t *process, socks_connection_t *con, 
+	http_info_t *http_info, http_proxy_response_t *response )
+{
+	socks_order_t *order = con->session->order;
+	if (order == NULL) {
+		response->status = HTTP_AUTH_ERR_AUTH_FAILED;
+		return response->status;
+	}
+	
+	//FIXME
+	unsigned char addr[512];
+	memset(addr, 0, sizeof(addr));
+	int len;
+	if ( http_info->request.proxy_mode == HTTP_PROXY_MODE_FORWORD ||
+		http_info->request.proxy_mode == HTTP_PROXY_MODE_TUNNEL){
+		//forword mode
+		if (!http_info->request.port_end)
+			len = http_info->request.host_end - http_info->request.host_start + 1;
+		else
+			len = http_info->request.port_end - http_info->request.host_start + 1;
+		 if(len <= 0){
+			sys_log(LL_ERROR, "[ %s:%d ] get  dest host failed !", __FILE__, __LINE__);
+			return -1;
+		}
+		memcpy(addr, http_info->request.host_start, len);
+	}
+	else if (http_info->request.proxy_mode == HTTP_PROXY_MODE_REVERSE){
+		//reverse mode
+		if (!http_info->request.dest_port_end)
+			len = http_info->request.dest_host_end - http_info->request.dest_host_start + 1;
+		else
+			len = http_info->request.dest_port_end - http_info->request.dest_host_start + 1;
+		if(len <= 0){
+			sys_log(LL_ERROR, "[ %s:%d ] get  dest host failed !", __FILE__, __LINE__);
+			return -1;
+		}
+		memcpy(addr, http_info->request.dest_host_start, len);
+	}
+	
+	response->status = _http_check_passwd(con->session->token, addr, order->order_key, con->session->passwd );
+	if( response->status == HTTP_AUTH_ERR_AUTH_FAILED ){
+		//if failed, try get data from redis, then try again
+		response->status = get_order_data_from_redis( process->redis_connect, order, order->token );
+		if( response->status != SOCKS_AUTH_SUCCESS ){
+			return response->status;
+		}
+
+		response->status = _http_check_passwd(con->session->token, addr, order->order_key, con->session->passwd );
+		if( response->status == HTTP_AUTH_ERR_AUTH_FAILED ){
+			order->auth_fail_times++;
+			sys_log(LL_DEBUG, "check passwd failed! passwd: %s|%s|%s", con->session->token, 
+				order->order_key, addr);
+		}
+	}
+
+	return response->status;
+}
+
+static int _http_check_passwd(unsigned char *token, unsigned char *addr, unsigned char *key, unsigned char *passwd)
+{
+	char  conbinedstr[1024];
+	char  decrypt[16];
+	char  hex[33];
+
+	memset( conbinedstr, 0, sizeof(conbinedstr ) );
+	memset( decrypt, 0, sizeof(decrypt ) );
+	memset( hex, 0, sizeof(hex ) );
+	
+	sprintf( conbinedstr, "%s|%s|%s", token, key, addr);
+
+	MD5_CTX md5;
+	MD5Init(&md5);              
+	MD5Update( &md5, conbinedstr, strlen((char *)conbinedstr) );
+	MD5Final( &md5, decrypt );       
+	MDString2Hex( decrypt, hex ); 
+
+	if(strcmp( passwd, hex) != 0){
+		return HTTP_AUTH_ERR_AUTH_FAILED;
+	}
+	
+	return HTTP_AUTH_SUCCESS;
+}
+
+static int _http_check_order( socks_worker_process_t *process, socks_order_t *order, socks_session_t *session, long nowms )
+{
+	if( order->auth_fail_times >= AUTH_FAIL_TIMES_THRESHOLD ){
+		if( order->frozen_stamp + g_config.order_frozen_timeout<nowms && order->frozen_stamp != 0){
+			order->auth_fail_times = 0;
+			order->frozen = 0;
+			order->frozen_stamp = 0;
+		}
+		else{
+			order->frozen = 1;
+			order->frozen_stamp = nowms;
+			return HTTP_AUTH_ERR_FROZEN;
+		}	
+	}
+
+	if( strstr( order->order_apps, session->app_pname ) == NULL){
+		get_order_data_from_redis( process->redis_connect, order, order->token );
+		if( strstr( order->order_apps, session->app_pname ) == NULL){
+			order->auth_fail_times++;
+			return HTTP_AUTH_ERR_AUTH_FAILED;
+		}
+	}
+
+	if( order->order_endtime < nowms ){
+		if( order->order_status != ORDER_STATUS_EXPIRED	&& order->close_updated==0 ){
+			order->order_status = ORDER_STATUS_EXPIRED;
+			add_order_to_will_close_queue( process, order );
+		}
+	}
+
+	if( order->order_status != ORDER_STATUS_SUCCESS || order->order_balance <= 0){
+		return HTTP_AUTH_ERR_ORDER_STATUS;
+	}
+
+	return HTTP_AUTH_SUCCESS;
+}
+
+static int _http_check_activity_if_exist( socks_worker_process_t *process, socks_order_t *order, http_proxy_response_t *response, long nowms )
+{
+	if ( !order->activity ){
+		response->order_status = order->order_status;
+		return SOCKS_AUTH_SUCCESS;
+	}
+
+	flow_pool_activity_t *activity = order->activity;
+	
+	if (activity->today_over){
+		response->order_status = ACTIVITY_STATUS_NO_DAILY;
+		add_order_to_will_close_queue( process, order );
+		return HTTP_AUTH_ERR_ORDER_STATUS;
+	}
+
+	if( activity->activity_endtime < nowms ){
+		if( activity->activity_status != ACTIVITY_STATUS_EXPIRED && activity->close_updated==0 ){
+			activity->activity_status = ACTIVITY_STATUS_EXPIRED;
+			// FIXME:  
+			order->order_status = ORDER_STATUS_EXPIRED;
+			add_order_to_will_close_queue( process, order );
+		}
+	}
+	if( activity->activity_balance <= 0 ){
+		if( activity->activity_status != ACTIVITY_STATUS_NO_BALANCE && activity->close_updated==0 ){
+			activity->activity_status = ACTIVITY_STATUS_NO_BALANCE;
+			add_order_to_will_close_queue( process, order );
+		}
+	}
+
+	if( activity->activity_status != ACTIVITY_STATUS_NORMAL ){
+		response->order_status = activity->activity_status;
+		return HTTP_AUTH_ERR_ORDER_STATUS;
+	}
+
+	response->order_status = order->order_status;
+	return HTTP_AUTH_SUCCESS;
+}

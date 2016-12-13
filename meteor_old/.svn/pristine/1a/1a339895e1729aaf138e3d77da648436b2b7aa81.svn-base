@@ -1,0 +1,77 @@
+#ifndef METEOR_H_
+#define METEOR_H_
+
+#include "log.h"
+#include "sockd_rbtree.h" 
+
+#define meteor_version					1000000
+#define METEOR_VERSION					"1.0.0"
+#define METEOR_VER         				 "METEOR/" METEOR_VERSION
+
+#define SECONDS_OF_ONE_DAY				(24*60*60)
+#define SECONDS_OF_TIME_ZONE			(8*60*60)
+
+typedef struct socks_domain_s socks_domain_t;
+
+#define AUTH_FAIL_TIMES_THRESHOLD			15
+
+typedef struct socks_udp_listen_s socks_udp_listen_t;
+
+typedef struct socks_module_config_s socks_module_config_t;
+typedef struct socks_worker_config_s socks_worker_config_t;
+
+typedef struct socks_worker_process_s socks_worker_process_t;
+typedef struct socks_order_s socks_order_t;
+typedef struct flow_pool_activity_s flow_pool_activity_t;
+
+typedef struct socks_session_s socks_session_t;
+typedef struct socks_connection_s socks_connection_t;
+typedef struct socks_udp_connection_s socks_udp_connection_t;
+
+typedef union  socks_addr_u socks_addr_t;
+typedef struct socks_host_s socks_host_t;
+
+typedef struct socks_auth_req_s socks_auth_req_t;
+typedef struct socks_auth_reply_s socks_auth_reply_t;
+
+typedef struct socks_command_s socks_command_t;
+typedef struct socks_command_reply_s socks_command_reply_t;
+
+
+typedef struct socks_string_s socks_string_t;
+
+typedef struct rb_root domain_cache_t;
+typedef struct rb_root session_cache_t;
+typedef struct rb_root session_timer_t;
+typedef struct rb_root order_cache_t;
+typedef struct rb_root order_timer_t;
+typedef struct rb_root activity_cache_t;
+typedef struct rb_root activity_order_cache_t;
+typedef struct rb_root udp_addr_session_map_cache_t;
+
+typedef struct rb_root md5_cache_t;
+
+typedef struct http_info_s http_info_t;
+typedef struct http_request_s http_request_t;
+typedef struct http_response_s http_response_t;
+
+typedef struct http_proxy_response_s http_proxy_response_t;
+
+
+typedef struct rb_node rb_node_t;
+typedef struct rb_list rb_node_cache_t;
+
+void func_stack_dump(int err);
+void meteor_set_process_title(char *title);
+
+
+time_t get_mid_night_second( time_t now);
+long get_current_ms();
+char *get_local_ip();
+
+void set_default_module_conf( socks_module_config_t *conf );
+
+void set_default_worker_conf( socks_module_config_t *conf, socks_worker_config_t *w_conf);
+
+
+#endif //METEOR_H_

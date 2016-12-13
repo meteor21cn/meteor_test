@@ -1,0 +1,1729 @@
+#include "http_proxy.h"
+#include "sockd_tcp.h"
+#include "http_auth.h"
+
+static int _get_http_addr( http_info_t *http_info, struct sockaddr_in *sin );
+static int _conver_domain_to_addr( char * domain, struct sockaddr_in * addr_in);
+static int _connect_http_remote_host_ipv4(socks_worker_process_t *process, socks_connection_t *con );
+static int _send_http_request( socks_worker_process_t *process, socks_connection_t * client, socks_connection_t *remote);
+static int _send_http_response(socks_worker_process_t *process, socks_connection_t *con, http_proxy_response_t *response, int proxy_mode);
+static int _rewrite_request_header(socks_worker_process_t *process, socks_connection_t *con, http_info_t *http_info);
+static int _http_parse_request_line( char *b ,int length, http_request_t  *r);
+static int _http_parse_header_line(char *b ,int length ,http_request_t *r);
+static int _copy_remote_data_to_rewrite_buf(socks_connection_t *con, http_response_t * response);
+static int _send_rewrite_buf_data( socks_connection_t * con ,http_response_t * response, int send_fd );
+static void _do_http_connect( socks_worker_process_t *process, socks_connection_t *con,  struct sockaddr_in * addr_in );
+static void _http_client_data_transform_cb(  socks_worker_process_t *process, int fd, int events, void *arg);
+static void _http_remote_data_transform_cb(  socks_worker_process_t *process, int fd, int events, void *arg);
+static void _connect_http_remote_host_complete_cb(  socks_worker_process_t *process, int remote_fd, int events, void *arg);
+
+static char *stristr(const char *String, const char *Pattern);
+
+static int _rewrite_request_header(socks_worker_process_t *process, socks_connection_t *con, http_info_t *http_info)
+{
+	if(! http_info->request.proxy_mode){
+		//forword mode
+		//TODO: do some test
+		int old_header_len = con->data_length;
+		memset(con->buf, 0, RECV_BUF_SIZE);
+		http_info->request.x_meteorq_start = strstr(http_info->request.head_in, HTTP_REQUSET_FIELD_XMETEORQ);
+		http_info->request.x_meteorq_end = strstr(http_info->request.x_meteorq_start, CRLF);
+
+		int len = http_info->request.x_meteorq_start - http_info->request.head_in;
+		if(len <= 0){
+			sys_log(LL_ERROR, "[ %s:%d ] get  x_meteorq_start failed !", __FILE__, __LINE__);
+			return -1;
+		}
+		memcpy(con->buf, http_info->request.head_in, len);
+
+		unsigned char x_meteor[512];
+		sprintf(x_meteor, "%s %s.%d.%d.%s.%s.%s",
+			HTTP_REQUSET_FIELD_XMETEOR,
+			process->config->listen_host, process->config->listen_port,
+			http_info->request.auth_mode, con->session->token,
+			con->session->app_pname, con->session->passwd);
+
+		memcpy(con->buf + len, x_meteor, strlen(x_meteor));
+		len += strlen(x_meteor);
+
+		memcpy(con->buf + len , http_info->request.x_meteorq_end + 1, 
+			old_header_len - (http_info->request.x_meteorq_end - http_info->request.head_in));
+
+	}
+	else{
+		//reverse mode
+		int old_header_len = con->data_length;
+		memset(con->buf, 0, RECV_BUF_SIZE);
+		unsigned char * header_end = strstr(http_info->request.head_in, CRLFCRLF);
+		if (header_end == NULL){
+			sys_log(LL_ERROR, "[ %s:%d ] rewrite request header failed ! fd: %d", __FILE__, __LINE__, con->fd);
+			return -1;
+		}
+		int len = 0;
+		int add_len = 0;
+		add_len = http_info->request.host_start - http_info->request.head_in;
+		if (add_len<0 || !http_info->request.host_start ){
+			sys_log(LL_ERROR, "[ %s:%d ] rewrite request header failed ! fd: %d", __FILE__, __LINE__, con->fd);
+			return -1;
+		}
+		memcpy(con->buf, http_info->request.head_in, add_len);
+		len += add_len;
+
+		
+		//TODO: change HOST: area
+		unsigned char* host_pos = strstr(http_info->request.head_in, "Host: ") + 6;
+		unsigned char* host_end = strstr(host_pos, CRLF) + 2;
+		if (!host_pos){
+			return -1;
+		}
+		add_len =  host_pos - http_info->request.real_uri_start;
+		if (add_len<0 || !http_info->request.real_uri_start){
+			sys_log(LL_ERROR, "[ %s:%d ] rewrite request header failed ! fd: %d", __FILE__, __LINE__, con->fd);
+			return -1;
+		}
+		memcpy(con->buf + len, http_info->request.real_uri_start, add_len);
+		len += add_len;
+
+		add_len = http_info->request.dest_host_end - http_info->request.dest_host_start + 1;
+		if (add_len<0 || ! http_info->request.dest_host_end ||  !http_info->request.dest_host_start){
+			sys_log(LL_ERROR, "[ %s:%d ] rewrite request header failed ! fd: %d", __FILE__, __LINE__, con->fd);
+			return -1;
+		}
+		memcpy(con->buf + len, http_info->request.dest_host_start, add_len);
+		len += add_len;
+
+		add_len = header_end - host_end;
+		if (add_len<0 || !host_end){
+			sys_log(LL_ERROR, "[ %s:%d ] rewrite request header failed ! fd: %d", __FILE__, __LINE__, con->fd);
+			return -1;
+		}
+		memcpy(con->buf + len, host_end , add_len);
+		len  += add_len;
+
+		unsigned char x_meteor[512];
+		sprintf(x_meteor, "%s %s.%d.%d.%s.%s.%s",
+			HTTP_REQUSET_FIELD_XMETEOR,
+			process->config->listen_host, process->config->listen_port,
+			http_info->request.auth_mode, con->session->token,
+			con->session->app_pname, con->session->passwd);
+
+		memcpy(con->buf + len, x_meteor, strlen(x_meteor));
+		len += strlen(x_meteor);
+
+		add_len = old_header_len - (header_end -  http_info->request.head_in);
+		if (add_len<0){
+			sys_log(LL_ERROR, "[ %s:%d ] rewrite request header failed ! fd: %d", __FILE__, __LINE__, con->fd);
+			return -1;
+		}
+		memcpy(con->buf + len, header_end, add_len);
+	}
+
+	return 0;
+}
+
+static int _if_header_recv_complete(socks_connection_t *con)
+{
+	if (strstr(con->buf, CRLF) == NULL)
+		return -1;
+	if (strstr(con->buf, CRLFCRLF) == NULL)
+		return -1;
+
+	return 0;
+}
+
+static int _get_http_addr( http_info_t * http_info, struct sockaddr_in *sin )
+{
+	unsigned char header_addr[512];
+	memset(header_addr, 0, sizeof(header_addr));
+	int len;
+	
+	if (! http_info->request.proxy_mode){
+		//forword mode
+		len = http_info->request.host_end - http_info->request.host_start + 1;
+		memcpy(header_addr, http_info->request.host_start, len);
+	}
+	else{
+		//reverse mode
+		len = http_info->request.dest_host_end - http_info->request.dest_host_start + 1;
+		memcpy(header_addr, http_info->request.dest_host_start, len);
+	}
+
+	if(len <= 0){
+		sys_log(LL_ERROR, "[ %s:%d ] get  header line addr failed !", __FILE__, __LINE__);
+		return -1;
+	}
+
+
+	unsigned char * host_pos = header_addr;
+
+	unsigned char * host_end_pos = header_addr + len;
+
+	/*unsigned char * host_pos = strstr(http_info->request.head_in, "Host: ") + 6;
+
+	unsigned char * host_end_pos = strstr(host_pos, CRLF);*/
+
+	//find port
+	unsigned char * port_pos = strstr( host_pos, ":");
+	int has_port = 0;
+	if (port_pos != NULL && port_pos<host_end_pos){
+		has_port = 1;
+	}
+
+	int host_len, port_len;
+	if (has_port){
+		host_len = port_pos - host_pos;
+		port_len = host_end_pos - port_pos - 1;
+	}
+	else{
+		host_len = host_end_pos - host_pos;
+		port_len = 2;
+	}
+
+	unsigned char hostname[host_len + 1];
+	memcpy( hostname, host_pos, host_len);
+	hostname[host_len] = '\0';
+
+	int port = HTTP_DEFINE_PORT;
+	if (has_port){
+		char host_port[port_len + 1];
+		memcpy(host_port, port_pos + 1, port_len);
+		host_port[port_len] = '\0';
+		port = atoi(host_port);
+	}
+	sys_log(LL_DEBUG, "[ %s:%d ] http host %s:%d", __FILE__, __LINE__ , hostname, port);
+
+	sin->sin_port = htons(port);
+	int ret = _conver_domain_to_addr( hostname, sin);
+	if (ret<0){
+		return -1;
+	}
+
+	sys_log(LL_DEBUG, "[ %s:%d ] http host %s:%d", __FILE__, __LINE__ , inet_ntoa(sin->sin_addr), ntohs(sin->sin_port));
+	return 0;
+}
+
+static int _conver_domain_to_addr( char * domain, struct sockaddr_in * addr_in)
+{
+	extern int h_errno;
+	struct hostent *h;
+	h=gethostbyname(domain);
+	if(h==NULL)
+	{	
+		sys_log(LL_ERROR,  "[ %s:%d ] gethostbyname failed ! errinfo: %s", __FILE__, __LINE__, hstrerror(h_errno));
+		return -1;
+	}
+	else
+	{
+		memcpy(&addr_in->sin_addr.s_addr,h->h_addr,4);
+	}
+	return 0;
+}
+
+static int _copy_remote_data_to_rewrite_buf(socks_connection_t *con, http_response_t * response)
+{
+	int recv_len = con->data_length - con->sent_length;
+	int will_read = HTTP_REWRITE_BUF_SIZE - response->data_length;
+	if( will_read > recv_len)
+		will_read = recv_len;
+
+	memcpy(response->rewrite_buf + response->data_length, con->buf + con->sent_length, will_read);
+	response->data_length += will_read;
+	con->sent_length += will_read;
+
+	return response->data_length;
+}
+
+static int _send_rewrite_buf_data( socks_connection_t * con ,http_response_t * response, int send_fd )
+{
+	int total = 0;	
+	// will send size 
+	int size = response->data_length-response->sent_length;
+	if( size <=0 | size+response->sent_length>HTTP_REWRITE_BUF_SIZE|| response->sent_length < 0 || 
+		response->sent_length >=HTTP_REWRITE_BUF_SIZE || response->data_length<0 
+		|| response->data_length>HTTP_REWRITE_BUF_SIZE ){
+		sys_log(LL_ERROR, "[ %s:%d ] buf error, fd:%d, send_fd: %d, dlen:%d, slen:%d", __FILE__, __LINE__, con->fd, send_fd, 
+			response->data_length, response->sent_length );
+		func_stack_dump( 0 );
+		return -1;
+	}
+	
+	do{
+		int len = send(send_fd, &response->rewrite_buf[response->sent_length], size, MSG_DONTWAIT ); //MSG_WAITALL
+		if (len > 0)
+		{
+			response->sent_length += len;
+			total += len;
+			return total;
+		}
+		else if( len == 0 ){ 
+			sys_log(LL_ERROR, "[ %s:%d ] net disconnected when send data. fd: %d, dlen:%d, slen:%d, size:%d", __FILE__, __LINE__, 
+				send_fd, response->data_length, response->sent_length, size );
+			return -1;
+		}
+		else{
+			int err = errno;
+			if (err == EAGAIN)
+			{
+				sys_log(LL_DEBUG, "[ %s:%d ] send EAGAIN, fd: %d, dlen:%d, size:%d, %s", __FILE__, __LINE__, 
+					send_fd, response->data_length, size, strerror(errno)  );
+				break;
+			}
+
+			if (err == EINTR)
+			{
+				sys_log(LL_DEBUG, "[ %s:%d ] send EINTR, fd: %d, %s", __FILE__, __LINE__, send_fd, strerror(err)  );
+				continue;
+			}
+			/*if (err == EPIPE)
+			{
+				sys_log(LL_ERROR, "[ %s:%d ] send EPIPE, fd: %d, %s", __FILE__, __LINE__, send_fd, strerror(err)  );
+				func_stack_dump( err);
+				return -1;
+			}*/
+			sys_log(LL_ERROR, "[ %s:%d ] send error:%d, %s, fd: %d", __FILE__, __LINE__, err, strerror(err), send_fd );
+			//func_stack_dump( err);
+			return -1;
+		}
+		
+	}
+	while( 1 );
+	
+	return response->sent_length;
+
+}
+static void _clean_rewrite_buf( http_response_t *response )
+{
+	memset( response->rewrite_buf, 0, HTTP_REWRITE_BUF_SIZE );
+	response->data_length = 0;
+	response->sent_length = 0;
+}
+
+static void _do_http_connect( socks_worker_process_t *process, socks_connection_t *con,  struct sockaddr_in * addr_in )
+{
+	socks_connection_t *remote = (socks_connection_t *)malloc(sizeof(socks_connection_t));
+	if( remote == NULL ){
+		sys_log(LL_ERROR, "[ %s:%d ] malloc remote error,fd: %d", __FILE__, __LINE__, con->fd );
+		close_session( process, con->session);
+		return;
+	}
+	memset( (void *)remote, 0,	sizeof(socks_connection_t) );
+	con->session->remote = remote;
+	remote->session = con->session;
+
+	copy_sockaddr_to_hostname( &addr_in->sin_addr, remote->peer_hostname);
+	//FIXME
+	remote->peer_host.atype = SOCKS_ATYPE_IPV4;
+	memcpy( &remote->peer_host.addr.ipv4 , &addr_in->sin_addr, sizeof(addr_in->sin_addr) );
+	memcpy( &remote->peer_host.port , &addr_in->sin_port, sizeof(addr_in->sin_port) );
+
+	remote->peer_conn = con;
+	con->peer_conn = remote;
+	
+	sys_log(LL_DEBUG, "[ %s:%d ] connect command: %s:%d", __FILE__, __LINE__, remote->peer_hostname, ntohs(remote->peer_host.port));
+	
+	int ret = _connect_http_remote_host_ipv4( process, con ); 
+	if( ret < 0){
+		sys_log(LL_ERROR, "[ %s:%d ] connect remote: %s:%d failed !", __FILE__, __LINE__, remote->peer_hostname, ntohs(remote->peer_host.port));
+		con->session->http_info->proxy_response.status = HTTP_CONNECT_ERR;
+		_send_http_response(process, con, &con->session->http_info->proxy_response, con->session->http_info->request.proxy_mode);
+		close_session(process, con->session);
+		return;
+	}
+
+	return;
+}
+
+// while data from client or remote host, then transform to the orther peer
+static void _http_client_data_transform_cb(  socks_worker_process_t *process, int fd, int events, void *arg)
+{
+	// about recv and send, see http://www.cnblogs.com/blankqdb/archive/2012/08/30/2663859.html
+	socks_connection_t *con = (socks_connection_t*)arg;
+
+	if( con->session->stage != HTTP_STAGE_TCP_DATA ){
+		sys_log(LL_ERROR, "[ %s:%d ] error stage: %d, fd:%d", __FILE__, __LINE__, con->session->stage, fd );
+		close_session( process, con->session);
+		return;
+	}
+
+	if( con->closed ){
+		sys_log(LL_DEBUG, "[ %s:%d ] client closed by %d, fd:%d, dlen:%d, slen:%d, ", __FILE__, __LINE__, 
+			con->session->closed_by, fd, con->data_length, con->sent_length);
+		return;
+	}
+	
+	if( events & EPOLLIN)
+	{
+		int len = _recv_data( con, RECV_BUF_SIZE-con->data_length );
+		//sys_log(LL_DEBUG, "[ %s:%d ] just only %s recv, fd:%d, dlen:%d, slen:%d", __FILE__, __LINE__, 
+		//	up_direct?"client":"remote", con->fd, con->data_length, con->sent_length );
+		if( len <0 || con->eof == 1) 
+		{
+			int level = (con->eof == 1? LL_DEBUG: LL_ERROR);
+			sys_log(level, "[ %s:%d ] client recv eof:%d, fd:%d, dlen:%d, slen:%d, len: %d, errno:%d, %s", __FILE__, __LINE__, 
+				con->eof, con->fd, con->data_length, con->sent_length, len, errno, strerror(errno) );
+			if( con->eof )
+				close_session( process, con->session);
+			return;
+		}
+
+		//stat up flow
+		if( len > 0 )
+			do_stat_order_flow( process, con->session, len, 1, 1 );
+
+		//TODO: rewrite recv data
+	}
+
+	if( events & EPOLLOUT )
+	{
+		socks_connection_t *peer = con->peer_conn;
+		http_response_t * response = &con->session->http_info->response;
+		if( response->data_length > response->sent_length ){
+			sys_log(LL_DEBUG, "[ %s:%d ] continue, send to client , fd:%d, recv_fd:%d, dlen:%d, slen:%d", __FILE__, __LINE__, 
+				con->fd, peer->fd, response->data_length, response->sent_length);
+			
+			int len = _send_rewrite_buf_data( peer, response, con->fd );
+			if( len <0 ) {
+				int err = errno;
+				if( err == EPIPE || err == ECONNRESET){
+					con->eof = 1;
+					close_session( process, con->session);
+				}
+				int level = (con->eof == 1 ? LL_DEBUG: LL_ERROR );
+				sys_log(level, "[ %s:%d ] client send eof:%d, fd:%d, recv_fd:%d, dlen:%d, slen:%d, len: %d, errno:%d, %s", __FILE__, __LINE__, 
+					con->eof, con->fd, peer->fd, response->data_length, 
+					response->sent_length, len, errno, strerror(errno) );
+				return;
+			}
+			
+			if( response->sent_length == response->data_length && response->data_length>0 ){
+				_clean_rewrite_buf( response );
+				_copy_remote_data_to_rewrite_buf(peer, &peer->session->http_info->response);
+				if (peer->sent_length == peer->data_length && peer->data_length > 0){
+					_clean_recv_buf(peer);
+				}
+			}
+		}
+		else{
+			//sys_log(LL_DEBUG, "[ %s:%d ] no data for send to %s , fd:%d, recv_fd:%d, dlen:%d, slen:%d", __FILE__, __LINE__, 
+			//	up_direct?"client":"remote", con->fd, peer->fd, peer->data_length, peer->sent_length);
+		}
+	}
+
+}
+
+static void _http_remote_data_transform_cb(  socks_worker_process_t *process, int fd, int events, void *arg)
+{
+	// about recv and send, see http://www.cnblogs.com/blankqdb/archive/2012/08/30/2663859.html
+	socks_connection_t *con = (socks_connection_t*)arg;
+
+	if( con->session->stage != HTTP_STAGE_TCP_DATA ){
+		sys_log(LL_ERROR, "[ %s:%d ] error stage: %d, fd:%d", __FILE__, __LINE__, con->session->stage, fd );
+		close_session( process, con->session);
+		return;
+	}
+
+	if( con->closed ){
+		sys_log(LL_DEBUG, "[ %s:%d ] remote closed by %d, fd:%d, dlen:%d, slen:%d, ", __FILE__, __LINE__, 
+			con->session->closed_by, fd, con->data_length, con->sent_length);
+		return;
+	}
+	
+	if( events & EPOLLIN)
+	{
+		int len = _recv_data( con, RECV_BUF_SIZE-con->data_length );
+		//sys_log(LL_DEBUG, "[ %s:%d ] just only %s recv, fd:%d, dlen:%d, slen:%d", __FILE__, __LINE__, 
+		//	up_direct?"client":"remote", con->fd, con->data_length, con->sent_length );
+
+		//TODO: rewrite recv data
+		_copy_remote_data_to_rewrite_buf(con, &con->session->http_info->response);
+		if (con->sent_length == con->data_length && con->data_length > 0){
+			_clean_recv_buf(con);
+		}
+
+		if( len <0 || con->eof == 1) 
+		{
+			int level = (con->eof == 1? LL_DEBUG: LL_ERROR);
+			sys_log(level, "[ %s:%d ] remote recv eof:%d, fd:%d, dlen:%d, slen:%d, len: %d, errno:%d, %s", __FILE__, __LINE__, 
+				con->eof, con->fd, con->data_length, con->sent_length, len, errno, strerror(errno) );
+			if( con->eof )
+				close_session( process, con->session);
+			return;
+		}
+	}
+
+	if( events & EPOLLOUT )
+	{
+		socks_connection_t *peer = con->peer_conn;
+		if( peer->data_length > peer->sent_length ){
+			sys_log(LL_DEBUG, "[ %s:%d ] continue, send to remote , fd:%d, recv_fd:%d, dlen:%d, slen:%d", __FILE__, __LINE__, 
+				con->fd, peer->fd, peer->data_length, peer->sent_length);
+			
+			int len = _send_data( peer, con->fd );
+			if( len <0 ) {
+				int err = errno;
+				if( err == EPIPE || err == ECONNRESET){
+					con->eof = 1;
+					close_session( process, con->session);
+				}
+				int level = (con->eof == 1 ? LL_DEBUG: LL_ERROR );
+				sys_log(level, "[ %s:%d ] remote send eof:%d, fd:%d, recv_fd:%d, dlen:%d, slen:%d, len: %d, errno:%d, %s", __FILE__, __LINE__, 
+					con->eof, con->fd, peer->fd, con->data_length, con->sent_length, len, errno, strerror(errno) );
+				return;
+			}
+			
+			if( peer->sent_length == peer->data_length && peer->data_length>0 ){
+				_clean_recv_buf( peer );
+			}
+			//stat down flow
+		}
+		else{
+			//sys_log(LL_DEBUG, "[ %s:%d ] no data for send to %s , fd:%d, recv_fd:%d, dlen:%d, slen:%d", __FILE__, __LINE__, 
+			//	up_direct?"client":"remote", con->fd, peer->fd, peer->data_length, peer->sent_length);
+		}
+	}
+
+}
+
+// connect remote host completed callback, then reply the result to client
+// only for ipv4
+static void _connect_http_remote_host_complete_cb(  socks_worker_process_t *process, int remote_fd, int events, void *arg)   
+{
+	socks_connection_t *remote = (socks_connection_t*)arg;
+	socks_connection_t *client = remote->session->client;
+
+	if( remote->session->stage != HTTP_STAGE_CONNECT ){
+		sys_log(LL_ERROR, "[ %s:%d ] error stage: %d, fd:%d ", __FILE__, __LINE__, remote->session->stage, remote_fd );
+
+	}
+
+	int error = _test_tcp_connect_result( remote_fd );
+	remote->event_count++;
+	long cost = get_current_ms() - remote->conn_stamp ;
+	if( error ){
+		// EPOLLIN:1 EPOLLOUT:4 EPOLLRDHUP:8192  EPOLLPRI:2  EPOLLERR:8  EPOLLHUP:16
+		sys_log(LL_ERROR, "[ %s:%d ] connect remote error:%s, fd:%d, %s:%d, events:0x%x, count:%d, cost:%d", __FILE__, __LINE__, 
+			strerror(error), remote_fd,  remote->peer_hostname, ntohs(remote->peer_host.port), events, remote->event_count, cost );
+		if (error != EINPROGRESS) {
+			remote->session->http_info->proxy_response.status = HTTP_CONNECT_ERR;
+			_send_http_response(process, remote, &remote->session->http_info->proxy_response, remote->session->http_info->request.proxy_mode);
+			close_session(process, remote->session);
+			return;
+		}
+		return;
+	}
+
+	remote->session->stage = HTTP_STAGE_TCP_DATA;
+
+	// connect successfully  
+	if( events & (EPOLLOUT) ){  
+		struct sockaddr_in local_addr; 
+		socklen_t len = sizeof(local_addr);
+		getsockname( remote_fd, (struct sockaddr*)&local_addr, &len);
+		
+		copy_sockaddr_to_hostname( &local_addr.sin_addr, remote->local_hostname);
+		remote->local_port = ntohs(local_addr.sin_port);
+		
+		sys_log(LL_DEBUG, "[ %s:%d ] connect remote ok, fd:%d, local: %s:%d", __FILE__, __LINE__, remote_fd, remote->local_hostname, remote->local_port );
+		_clean_recv_buf( remote );
+		//send http request
+		len = _send_http_request(process, client, remote);
+		if (len > 0){
+			_clean_recv_buf( client );
+			_clean_recv_buf( remote );
+			_clean_rewrite_buf( &client->session->http_info->response);
+			client->session->stage = HTTP_STAGE_TCP_DATA;
+			_change_session_event( process->epoll_fd, client, client->fd, EPOLLIN|EPOLLOUT|EPOLLHUP|EPOLLERR, _http_client_data_transform_cb );
+			_change_session_event( process->epoll_fd, remote, remote_fd, EPOLLIN|EPOLLOUT|EPOLLHUP|EPOLLERR, _http_remote_data_transform_cb );
+			return;
+		}
+
+		return;
+	} 
+
+}
+
+static int _connect_http_remote_host_ipv4(socks_worker_process_t *process, socks_connection_t *con )
+{
+	socks_connection_t *remote = con->session->remote;
+
+	struct sockaddr_in s_addr;
+	convert_to_sockaddr_in( &remote->peer_host, &s_addr);
+
+	int fd = remote->fd = socket(AF_INET, SOCK_STREAM, 0);
+
+	if ( fd < 0) {
+		sys_log(LL_ERROR, "[ %s:%d ] create remote socket error, fd:%d, %s:%d", __FILE__, __LINE__, fd, remote->peer_hostname, 
+			ntohs(remote->peer_host.port) );
+		return -1;
+	}
+
+	int value = process->config->reuseaddr ==1?1:0;
+	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (void *) &value, sizeof(int)) == -1){
+		sys_log(LL_ERROR, "[ %s:%d ] set SO_REUSEADDR fail, fd:%d", __FILE__, __LINE__, fd );
+	}
+
+	//value = 1;
+	//setsockopt( fd, SOL_SOCKET, SO_CONDITIONAL_ACCEPT, (void *)&value, sizeof(int));
+
+	int flags = fcntl( fd, F_GETFL, 0);
+	if (flags < 0) {
+		sys_log(LL_ERROR, "[ %s:%d ] %s: get socket flags errorfd:%d, %s:%d", __FILE__, __LINE__, fd, remote->peer_hostname, 
+			ntohs(remote->peer_host.port) );
+		return -1;
+	}
+
+	if (fcntl( fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+		sys_log(LL_ERROR, "[ %s:%d ] %s: set remote socket nonblock error,fd:%d, %s:%d", __FILE__, __LINE__, fd, remote->peer_hostname, 
+			ntohs(remote->peer_host.port) );
+		return -1;
+	}
+
+	con->session->stage = HTTP_STAGE_CONNECT;
+
+	_register_session_event( process->epoll_fd, remote, fd, EPOLLOUT|EPOLLIN|EPOLLHUP|EPOLLERR, _connect_http_remote_host_complete_cb );
+	remote->conn_stamp = get_current_ms();
+	int ret = connect( fd, (struct sockaddr*) &s_addr, sizeof (struct sockaddr));
+	if (ret < 0) {
+		if (errno != EINPROGRESS) {
+			sys_log(LL_ERROR, "[ %s:%d ] connect remote error, fd:%d, %s:%d", __FILE__, __LINE__, fd,  remote->peer_hostname, 
+				ntohs(remote->peer_host.port) );
+			return errno;
+		}
+	}
+	if( ret == 0 ){
+		sys_log(LL_ERROR, "[ %s:%d ] quick connect remote ok, fd:%d, %s:%d", __FILE__, __LINE__, fd,  remote->peer_hostname, 
+			ntohs(remote->peer_host.port) );
+	}
+
+	return 0;
+
+}
+
+static int _send_http_request( socks_worker_process_t *process, socks_connection_t * client, socks_connection_t *remote)
+{
+	//memcpy( remote->buf, client->buf, client->data_length);
+	int len = _send_data(client, remote->fd);
+	if( len <0 ) {
+		int err = errno;
+		if( err == EPIPE || err == ECONNRESET){
+			remote->eof = 1;
+			close_session( process, remote->session);
+		}
+		int level = (remote->eof == 1 ? LL_DEBUG: LL_ERROR );
+		sys_log(level, "[ %s:%d ] %s send eof:%d, fd:%d, recv_fd:%d, dlen:%d, slen:%d, len: %d, errno:%d, %s", __FILE__, __LINE__, 
+			"remote", remote->eof, remote->fd, client->fd, remote->data_length, remote->sent_length, len, errno, strerror(errno) );
+		return -1;
+	}
+
+	return len;
+
+}
+
+static int _send_http_response(socks_worker_process_t *process, socks_connection_t *con, http_proxy_response_t *response, int proxy_mode)
+{
+	unsigned char response_buf[512];
+	unsigned char str_time[64] = {0};
+	unsigned char http_version[16];
+	int send_length;
+	long now = time(NULL);
+	struct tm *ptime = localtime( &now );
+	strftime(str_time, sizeof(str_time), "%c", ptime);
+
+	switch ( con->session->http_info->request.http_version){
+		case HTTP_VERSION_10:{
+			strcpy(http_version, "HTTP/1.0");
+			break;
+		}
+		case HTTP_VERSION_11:{
+			strcpy(http_version, "HTTP/1.1");
+			break;
+		}
+		default :{
+			strcpy(http_version, "HTTP/1.1");
+			break;
+		}
+	}
+
+	unsigned char uri[HTTP_URI_MAX_LEN] = {0};
+	unsigned char *pos = uri;
+	int len;
+
+	if (!proxy_mode){
+		//forword mode
+		len = con->session->http_info->request.uri_end - con->session->http_info->request.uri_start + 1;
+		if(len <= 0){
+			sys_log(LL_ERROR, "[ %s:%d ] get  header line uri failed !", __FILE__, __LINE__);
+			return -1;
+		}
+		memcpy(pos, con->session->http_info->request.uri_start, len);
+		sprintf(response_buf, "%s %s %s\r\n%s %s\r\n%s %s:%d\r\n%s %d.%d.%ld.%ld.%ld\r\n\r\n",
+			http_version, HTTP_CODE_UNAUTHORIZED, HTTP_TEXT_UNAUTHORIZED,
+			HTTP_RESPONSE_FIELD_TIME, str_time,
+			HTTP_RESPONSE_FIELD_SERVER, process->config->listen_host,  process->config->listen_port,
+			HTTP_RESPONSE_FIELD_METEORS, response->status, response->order_status,
+			response->order_balance, response->used_today, response->company_balance);
+	}
+	else{
+		//reverse mode
+		len = con->session->http_info->request.host_start - con->session->http_info->request.uri_start;
+		if(len <= 0){
+			sys_log(LL_ERROR, "[ %s:%d ] get  header line uri failed !", __FILE__, __LINE__);
+			return -1;
+		}
+		memcpy(pos, con->session->http_info->request.uri_start, len);
+		pos += len;
+
+		len = con->session->http_info->request.real_uri_end - con->session->http_info->request.real_uri_start + 1;
+		if(len <= 1){
+			sys_log(LL_ERROR, "[ %s:%d ] get  header line uri failed !", __FILE__, __LINE__);
+			return -1;
+		}
+		memcpy(pos, con->session->http_info->request.real_uri_start, len);
+		sprintf(response_buf, "%s %s %s\r\n%s %s\r\n%s %s:%d\r\n%s %s\r\n%s %d.%d.%ld.%ld.%ld\r\n\r\n",
+			http_version, HTTP_CODE_MOVE_TEMPORARY, HTTP_TEXT_MOVE_TEMPORARY,
+			HTTP_RESPONSE_FIELD_TIME, str_time,
+			HTTP_RESPONSE_FIELD_SERVER, process->config->listen_host, process->config->listen_port,
+			HTTP_RESPONSE_FIELD_LOCATION, uri,
+			HTTP_RESPONSE_FIELD_METEORS, response->status, response->order_status,
+			response->order_balance, response->used_today, response->company_balance);
+	}
+
+	memset(con->buf, 0, RECV_BUF_SIZE);
+	memcpy(con->buf, response_buf, sizeof(response_buf));
+	send_length = sizeof(response_buf);
+	printf("response\n%s\n", con->buf);
+	
+	
+	len = _send_data_until_length( con, con->fd, send_length );
+	if(len <= 0 )	
+	{  
+		sys_log(LL_ERROR, "[ %s:%d ] cmd status:0x%2x send failed, fd:%d", __FILE__, __LINE__, response->status, con->fd );
+		close_session( process, con->session);
+	}
+	else
+		do_stat_order_flow( process, con->session, len+ETHERNET_IP_TCP_HEADER_SIZE, 0, 0 );
+	return 0;
+}
+
+void http_cb (  socks_worker_process_t *process, int client_fd, int events, socks_connection_t *con)    
+{    
+
+	if( con->session->stage != SOCKS_STAGE_NEGOTIATION ){
+		sys_log(LL_ERROR, "[ %s:%d ] error stage: %d, fd:%d ", __FILE__, __LINE__, con->session->stage, client_fd );
+		close_session( process, con->session);
+		return;
+	}
+	
+	int len;    
+	int will_read = HTTP_REQUSET_HEADER_MAX_LENGTH;
+	len = _recv_data_until_length ( con, will_read );
+	
+	//TODO: check if header recv complted
+	/*char *test_buf ="GET http://172.18.12.1s/meteorq.0.0.1.001|888|b29adac2bdc027497fa3a327d8566326/www.baidu.com HTTP/1.1\r\n"
+			"User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:38.0) Gecko/20100101 Firefox/38.0 Iceweasel/38.8.0\r\n"
+			"Proxy-Connection: keep-alive\r\n"
+			"Connection: keep-alive\r\n"
+			"Host: 172.18.12.1\r\n\r\n";
+			//"Connection: keep-alive\r\n\r\n";*/
+
+	char *test_buf ="GET http://www.baidu.com HTTP/1.1\r\n"
+			"User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:38.0) Gecko/20100101 Firefox/38.0 Iceweasel/38.8.0\r\n"
+			"Proxy-Connection: keep-alive\r\n"
+			"Connection: keep-alive\r\n"
+			"X-Meteorq: 1.001|888|b29adac2bdc027497fa3a327d8566326\r\n"
+			"Host: www.baidu.com\r\n"
+			"Connection: keep-alive\r\n\r\n";
+
+	len = strlen(test_buf);
+	_clean_recv_buf(con);
+	strcpy(con->buf, test_buf);
+	con->data_length = len;
+
+	http_info_t *http_info = (http_info_t *)malloc(sizeof(http_info_t));
+	memset(http_info, 0, sizeof(http_info));
+	con->session->http_info = http_info;
+
+	if( con->eof ){
+		//net disconnected. close session
+		sys_log(LL_ERROR, "[ %s:%d ] disconnected when recv http connection, len: %d", __FILE__, __LINE__, len );
+		close_session( process, con->session);
+		return;
+	}
+
+	if (con->data_length > will_read){
+		sys_log(LL_ERROR, "[ %s:%d ] http header too long, len: %d, def max: %d", __FILE__, __LINE__, len, HTTP_REQUSET_HEADER_MAX_LENGTH );
+		close_session(process, con->session);
+		return;
+	}
+
+	int ret = _if_header_recv_complete(con);
+	if (ret < 0){
+		sys_log(LL_ERROR, "[ %s:%d ] http header not recv completly !", __FILE__, __LINE__, len, HTTP_REQUSET_HEADER_MAX_LENGTH );
+		close_session(process, con->session);
+		return;
+	}
+
+	//TODO: parse header line, header
+	memcpy(con->session->http_info->request.head_in, con->buf, HTTP_REQUSET_HEADER_MAX_LENGTH);
+
+	printf("head_in\n%s\n", con->session->http_info->request.head_in);
+
+	ret = _http_parse_request_line(con->session->http_info->request.head_in, len, &con->session->http_info->request);
+	if (ret < 0){
+		sys_log(LL_ERROR, "[ %s:%d ] parse request line failed ! fd: %d", __FILE__, __LINE__, con->fd );
+		close_session(process, con->session);
+		return;
+	}
+
+	ret = _http_parse_header_line(con->session->http_info->request.head_in, len, &con->session->http_info->request);
+	if (ret < 0){
+		sys_log(LL_ERROR, "[ %s:%d ] parse header line failed ! fd: %d", __FILE__, __LINE__, con->fd );
+		close_session(process, con->session);
+		return;
+	}
+	
+	struct sockaddr_in http_addr;
+	ret = _get_http_addr( http_info, &http_addr);
+	if (ret<0){
+		sys_log(LL_ERROR, "[ %s:%d ] get http host from header failed ! fd: %d", __FILE__, __LINE__, con->fd);
+		close_session(process, con->session);
+		return ;
+	}
+
+	http_auth(process, con, http_info, &http_info->proxy_response);
+	if ( http_info->proxy_response.status != HTTP_AUTH_SUCCESS){
+		sys_log(LL_ERROR, "[ %s:%d ] http auth failed ! status: %d", __FILE__, __LINE__, http_info->proxy_response.status);
+		_send_http_response(process, con, &http_info->proxy_response, http_info->request.proxy_mode);
+		close_session(process, con->session);
+		return;
+	}
+
+	
+	ret = _rewrite_request_header(process, con, http_info);
+	if ( ret < 0){
+		sys_log(LL_ERROR, "[ %s:%d ] rewrite http header failed ! fd : %d", __FILE__, __LINE__, con->fd);
+		_send_http_response(process, con, &http_info->proxy_response, http_info->request.proxy_mode);
+		close_session(process, con->session);
+		return ;
+	}
+	printf("rewrite\n%s\n", con->buf);
+
+	_do_http_connect( process, con, &http_addr);
+	return ;			
+}
+
+
+static char *stristr(const char *String, const char *Pattern)
+{
+	  char *pptr, *sptr, *start;
+	  unsigned int  slen, plen;
+	  for (start = (char *)String,
+		   pptr  = (char *)Pattern,
+		   slen  = strlen(String),
+		   plen  = strlen(Pattern);
+		   /* while string length not shorter than pattern length */
+		   slen >= plen;
+		   start++, slen--)
+	  {
+			/* find start of pattern in string */
+			while (toupper(*start) != toupper(*Pattern))
+			{
+				  start++;
+				  slen--;
+				  /* if pattern longer than string */
+				  if (slen < plen)
+						return(NULL);
+			}
+			sptr = start;
+			pptr = (char *)Pattern;
+			while (toupper(*sptr) == toupper(*pptr))
+			{
+				  sptr++;
+				  pptr++;
+				  /* if end of pattern then pattern was found */
+				  if ( strlen(pptr) == 0 )
+						return (start);
+			}
+	  }
+	  return(NULL);
+}
+
+
+static int
+_http_parse_request_line( char *b ,int length, http_request_t  *r)
+{
+	char   c, ch, *p, *m, *d;
+	int i ,j = 0, k = 0;
+	char buf_meteorq[1024]="";
+	enum {
+		sw_start = 0,
+		sw_method,
+		sw_spaces_before_uri,
+		sw_schema,
+		sw_schema_slash,
+		sw_host_start,
+		sw_host,
+		sw_host_end,
+		sw_host_ip_literal,
+		sw_port,
+		sw_after_slash_in_uri,
+		sw_at_flag,
+		sw_domian_flag,
+		sw_auth_mode,
+		sw_before_auth_token,
+		sw_before_auth_APP,
+		sw_before_auth_passwd,
+		sw_before_real_uri,
+		sw_before_version,
+
+		sw_before_dest_host_start,
+		sw_dest_host,
+		sw_dest_host_end,
+		sw_dest_host_ip_literal,
+		sw_dest_port,
+
+		sw_version_H,
+		sw_version_HT,
+		sw_version_HTT,
+		sw_version_HTTP,
+		sw_version_1,
+		sw_dot_before_version,
+		sw_version,
+		sw_almost_done
+
+	} state;
+	
+
+	p=b;
+	state =0;
+	for(i=0;i<length+1;i++){
+		ch = b[i];
+		switch (state){
+			case sw_start:
+				m = r->method_start;
+				if (ch == CR   || ch == LF  ){
+					break;
+				}
+
+				if ((ch < 'A' || ch > 'Z') && ch != '_' && ch != '-'){
+
+					return HTTP_PARSE_ERROR;
+				}
+				state = sw_method;
+				r->method_start = &(b[i]);
+				d=&(b[i]);
+				break; 
+			case sw_method:
+				if(ch == ' '){
+					r->method_end = &(b[i-1]);
+					for (d;d<=&(b[i-1]);d++){
+						r->buf_method[k]=*d;
+						k++;
+					}
+					if (strcmp(r->buf_method,"GET")==0){
+						r->method = MET_HTTP_GET;
+						state = sw_spaces_before_uri;
+						break;
+					}
+					else if (strcmp(r->buf_method,"HEAD")==0){
+						r->method = MET_HTTP_HEAD;
+						state = sw_spaces_before_uri;
+						break;
+						
+					}
+					else if (strcmp(r->buf_method,"POST")==0){
+						r->method = MET_HTTP_POST ;
+						state = sw_spaces_before_uri;
+						break;
+					}
+					else if (strcmp(r->buf_method,"PUT")==0){
+						r->method = MET_HTTP_PUT ;
+						state = sw_spaces_before_uri;
+						break;
+					}
+					else if (strcmp(r->buf_method,"DELETE")==0){
+						r->method = MET_HTTP_DELETE ;
+						state = sw_spaces_before_uri;
+						break;
+					}
+					else if (strcmp(r->buf_method,"MKCOL")==0){
+						r->method = MET_HTTP_MKCOL ;
+						state = sw_spaces_before_uri;
+						break;
+					}
+					else if (strcmp(r->buf_method,"COPY")==0){
+						r->method = MET_HTTP_COPY ;
+						state = sw_spaces_before_uri;
+						break;
+					}
+					else if (strcmp(r->buf_method,"MOVE")==0){
+						r->method = MET_HTTP_MOVE ;
+						state = sw_spaces_before_uri;
+						break;
+					}
+					else if (strcmp(r->buf_method,"OPTIONS")==0){
+						r->method = MET_HTTP_OPTIONS ;
+						state = sw_spaces_before_uri;
+						break;
+					}
+					else if (strcmp(r->buf_method,"PROPFIND")==0){
+						r->method = MET_HTTP_PROPFIND ;
+						state = sw_spaces_before_uri;
+						break;
+					}
+					else if (strcmp(r->buf_method,"PROPPATCH")==0){
+						r->method = MET_HTTP_PROPPATCH ;
+						state = sw_spaces_before_uri;
+						break;
+					}
+					else if (strcmp(r->buf_method,"LOCK")==0){
+						r->method = MET_HTTP_LOCK ;
+						state = sw_spaces_before_uri;
+						break;
+					}
+					else if (strcmp(r->buf_method,"UNLOCK")==0){
+						r->method = MET_HTTP_UNLOCK ;
+						state = sw_spaces_before_uri;
+						break;
+					}
+					else if (strcmp(r->buf_method,"PATCH")==0){
+						r->method = MET_HTTP_PATCH ;
+						state = sw_spaces_before_uri;
+						break;
+					}
+					else if (strcmp(r->buf_method,"TRACE")==0){
+						r->method = MET_HTTP_TRACE ;
+						state = sw_spaces_before_uri;
+						break;
+					}
+					else{
+						r->method = MET_HTTP_UNKNOWN;
+						return HTTP_PARSE_ERROR ;
+					}
+				}
+				if ((ch < 'A' || ch > 'Z') && ch != '_' && ch != '-') {
+
+				return HTTP_PARSE_ERROR;
+				}   
+				break;
+
+			/* space * before URI */
+			case sw_spaces_before_uri:
+
+				r->uri_start = &(b[i]);
+				if(ch =='/'){
+
+						//                        r->uri_start=&(p[i]);
+						state=sw_after_slash_in_uri;
+						m = &(b[i+1]);
+						break;
+					}     
+
+				if (ch >= 'a' && ch <= 'z') {
+					r->schema_start = &(b[i]);
+					//                    r->uri_start = &(b[i]);
+					r->real_uri_start=&(b[i]);   
+					state = sw_schema;
+					break;
+				}   
+				switch (ch){
+				case ' ':
+					break;
+				default:
+					return HTTP_PARSE_ERROR;
+				}
+				break;
+
+			case sw_schema:
+
+				if(ch >='a' && ch <='z'){
+					break;
+				} 
+
+				switch(ch){
+				case ':':
+					r->schema_end = &(b[i]);
+					state = sw_schema_slash;
+					break;
+				default:
+					return HTTP_PARSE_ERROR;
+				}
+			break;
+
+			case sw_schema_slash:
+				switch(ch){
+				case '/':
+					state = sw_host_start;
+					break;
+				default:
+					return HTTP_PARSE_ERROR;
+				}
+				break;
+
+			case sw_host_start:
+				if (ch == '/'){
+				r->host_start=&(b[i+1]);
+				//                r->uri_start=&(b[i+1]);
+				break;
+				}
+				if(ch == '['){
+					state = sw_host_ip_literal;
+					break;
+				}
+				state = sw_host;
+
+				/* fall through */
+			case sw_host:
+
+				if(ch >= 'a' && ch <= 'z'){
+					break;
+
+				}
+
+				if ((ch >= '0' && ch <= '9') || ch == '.' || ch == '-'){
+					break;
+				}
+				if (ch == ':'){
+					r->host_end = &(b[i-1]);
+					state = sw_host_end;
+					r->port_start=&(b[i+1]);
+					break;
+				}
+				if (ch == '/'){
+					r->meteorq_start = &(b[i+1]);
+					r->host_end = &(b[i-1]);
+					state = sw_after_slash_in_uri; 
+					m = &(b[i+1]);
+					//                	r->uri_start = &(b[i-1]);
+					break;
+				}
+				if (ch == ' '){
+					r->uri_end=&(b[i-1]);
+					r->host_end = &(b[i-1]);
+					state = sw_version_H;
+					break;
+				}
+
+				break;
+
+			/* fall through */
+			case sw_host_end: 
+
+				if (ch == '/'){
+					r->meteorq_start = &(b[i+1]);
+					state = sw_after_slash_in_uri;
+					m = &(b[i+1]);//jiang  jiexitiaozhengdaozhe  /meteorq.1.2.3.token.APP.passwd/www.baidu.com/index.html
+				}
+				if (ch >='0' && ch<='9'){
+					break;
+					
+				}
+				if (ch ==' '){
+					r->uri_end=&(b[i-1]);
+					r->port_end=&(b[i-1]);
+					state = sw_version_H;
+					break;
+				}
+				break;
+
+			case sw_host_ip_literal:
+				if (ch >= '0' && ch <= '9') {
+					break;
+				}
+
+				if (ch >= 'a' && ch <= 'z') {
+					break;
+				}
+
+				switch (ch) {
+				case ':':
+					break;
+				case ']':
+					state = sw_host_end;
+					break;
+				case '-':
+				case '.':
+				case '_':
+				case '~':
+					/* unreserved */
+					break;
+				case '!':
+				case '$':
+				case '&':
+				case '\'':
+				case '(':
+				case ')':
+				case '*':
+				case '+':
+				case ',':
+				case ';':
+				case '=':
+					/* sub-delims */
+					break;
+				default:
+					return HTTP_PARSE_ERROR;
+
+				}
+				break;
+
+			case sw_port:
+				if(ch >= '0' && ch <= '9'){
+					break;
+				}
+
+				switch (ch){
+				case '/':
+					r->port_end =&(b[i-1]);
+					//                    r->uri_start =&(b[i+1]);
+					state = sw_after_slash_in_uri;
+					m = &(b[i+1]);
+					break;
+			  case ' ':
+					r->port_end = &(b[i-1]);
+					r->uri_end = &(b[i-1]);
+					state = sw_version_H;
+					//                  r->r->port_end = p[i];
+				default:
+					return HTTP_PARSE_ERROR;                		
+
+				}
+				break;
+
+			case sw_after_slash_in_uri:
+
+				if (ch >= 'a' && ch <= 'z'){
+					break;
+				}
+				if (ch == '.'){
+
+					for (m; m<=&(b[i-1]);m++){
+						buf_meteorq[j]=*m;
+						j++;
+					}
+					//            		printf("%s\n",buf_meteorq );
+					if (strcmp(buf_meteorq,HTTP_REQUSET_FIELD_METEORQ)==0){
+						r->proxy_mode= HTTP_PROXY_MODE_REVERSE;
+						state = sw_at_flag;
+						break;
+					}
+					else {
+						r->proxy_mode= HTTP_PROXY_MODE_FORWORD;
+						state = sw_before_version;
+						break;
+					}
+				}
+				r->proxy_mode=HTTP_PROXY_MODE_FORWORD;
+				state = sw_before_version;
+				break;
+			case sw_at_flag:
+
+				if (ch != '.'){ 
+					if(ch >= '0' && ch <='9'){    
+						r->at_flag=b[i] - '0';                   	
+						break;
+					}
+					return HTTP_PARSE_ERROR;	  
+				}               
+				state = sw_domian_flag;
+				break;
+			case sw_domian_flag:
+				
+				if (ch != '.'){
+					if(ch >= '0' && ch <='9'){
+						r->domain_flag=b[i] - '0';
+						break;
+					}
+					return HTTP_PARSE_ERROR;
+				}
+				state = sw_auth_mode;
+				break;
+
+			case sw_auth_mode:
+				
+				if (ch != '.'){
+					if(ch >= '0' && ch <='9'){
+						r->auth_mode=b[i] - '0';                     	
+						r->auth_info_token_start=&(b[i+2]);      
+						break;
+					}
+					return HTTP_PARSE_ERROR;
+				}
+				state = sw_before_auth_token;
+				break;
+
+			case sw_before_auth_token:
+
+				if (ch !='|'){
+					break;   
+				}
+					r->auth_info_token_end=&(b[i-1]);
+					r->auth_info_app_start = &(b[i+1]);
+					state = sw_before_auth_APP;
+					break;
+
+			case sw_before_auth_APP:
+
+				if (ch !='|'){
+					break;
+				}
+					r->auth_info_app_end=&(b[i-1]);
+					state = sw_before_auth_passwd;
+					r->auth_info_passwd_start = &(b[i+1]);
+				break;
+
+			case sw_before_auth_passwd:
+
+				if (ch!='/') {
+			   
+				}
+				else
+				{
+					r->auth_info_passwd_end=&(b[i-1]);
+					state = sw_before_real_uri;
+					r->real_uri_start = &(b[i+1]);
+					r->dest_host_start=&(b[i+1]); 
+				} 
+				break;
+
+			case sw_before_real_uri:
+
+					if (ch != ' '){
+						state = sw_before_dest_host_start;
+						break; 
+
+					}
+
+			case sw_before_version:
+
+					if (ch != ' '){
+						break;
+					}
+					else 
+					{
+						r->real_uri_end=&(b[i-1]);
+						r->uri_end=&(b[i-1]);
+						state = sw_version_H;
+						break;
+					}    
+
+			case sw_before_dest_host_start:
+					if (ch == '[') {
+						state = sw_dest_host_ip_literal;
+						break;
+					}
+
+					state = sw_dest_host;
+
+					/* fall through */
+			case sw_dest_host:
+
+					//                    c=ch;
+					if (ch >= 'a' && ch <= 'z') {
+						break;
+					}
+
+					if ((ch >= '0' && ch <= '9') || ch == '.' || ch == '-') {
+					break;
+					}
+					switch (ch){
+						//                        printf("!!!!!!!!!!!!!!!!%c\n",ch);
+						case ':':
+						r->dest_host_end = &(b[i-1]);
+						state = sw_dest_port;
+						r->dest_port_start = &(b[i+1]);
+						break;
+						case '/':
+						r->dest_host_end = &(b[i-1]);
+						state = sw_before_version;
+						break;
+						case ' ':
+						r->dest_host_end = &(b[i-1]);
+						r->real_uri_end=&(b[i-1]);
+						r->uri_end=&(b[i-1]);
+						state = sw_version_H;
+						break;
+						default:
+						break;
+						return HTTP_PARSE_ERROR;
+					}
+					/* fall through */
+			case sw_dest_host_ip_literal:
+
+					if (ch >= '0' && ch <= '9') {
+					break;
+					}
+					if (ch >= 'a' && ch <= 'z') {
+					break;
+					}
+
+					switch (ch) {
+					case ':':
+					break;
+					case ']':
+					//                    state = sw_dest_host;
+					break;
+					case '-':
+					case '.':
+					case '_':
+					case '~':
+					/* unreserved */
+					break;
+					case '!':
+					case '$':
+					case '&':
+					case '\'':
+					case '(':
+					case ')':
+					case '*':
+					case '+':
+					case ',':
+					case ';':
+					case '=':
+					/* sub-delims */
+					break;
+					default:
+					break;
+					return HTTP_PARSE_ERROR;
+					}
+					break;
+
+		case sw_dest_port:
+
+				if (ch >= '0' && ch <= '9') {
+					break;
+				}
+			   
+				switch (ch) {
+				case '/':
+				r->dest_port_end = &(b[i-1]);
+				//                r->uri_start = p;
+				state = sw_before_version;
+				break;
+				case ' ':
+				r->dest_port_end = &(b[i-1]);
+				//                printf("****************%d\n",i );
+				r->uri_end = &(b[i-1]);
+				r->real_uri_end = &(b[i-1]);
+				state = sw_version_H;
+				//                r->dest_port_end = &(b[i]);
+				/*
+				 * use single "/" from request line to preserve pointers,
+				 * if request line will be copied to large client buffer
+				 */
+				//                r->uri_start = r->schema_end + 1;
+				//                r->uri_end = r->schema_end + 2;
+				//                state = sw_host_http_09;
+				break;
+				default:
+				return HTTP_PARSE_ERROR;
+				}
+				break;
+					 
+			case sw_version_H:
+					if (ch == ' '){
+						break;
+					}
+					if (ch == 'H'){
+						state = sw_version_HT;
+						break;
+					}
+				return HTTP_PARSE_ERROR;
+
+			case sw_version_HT:
+					if (ch == 'T'){
+						state = sw_version_HTT;
+						break;
+					}
+				return HTTP_PARSE_ERROR;
+
+			case sw_version_HTT:
+					if (ch == 'T'){
+						state = sw_version_HTTP;
+						break;
+					}
+				return HTTP_PARSE_ERROR;
+
+			case sw_version_HTTP:
+					if(ch == 'P'){
+						state = sw_version_1;
+						break;
+					}
+				return HTTP_PARSE_ERROR;
+
+			case sw_version_1:
+					if (ch == '1'){
+						state = sw_dot_before_version;
+						break;
+					}
+
+			case sw_dot_before_version:
+					if (ch == '.'){
+						state = sw_version;
+						break;
+					}
+					break;
+			case sw_version:
+					if (ch == '0'){
+						r->http_version = HTTP_VERSION_10;
+						return HTTP_PARSE_OK;
+			//                        state = sw_almost_done;
+			//                        break;
+					}
+					if(ch == '1'){
+						r->http_version = HTTP_VERSION_11;
+						 //                       state = sw_almost_done;
+						 //                       break;
+						return HTTP_PARSE_OK;
+					}
+
+					default:
+						return HTTP_PARSE_ERROR;
+					
+		}
+	}
+	return HTTP_PARSE_OK;
+}
+
+static int
+_http_parse_header_line(char *b ,int length ,http_request_t *r)
+{
+
+		char   ch, *p,*h,*c;
+		int i,request_header_flag=0;
+		//    ngx_uint_t  hash, i;
+		enum {
+		sw_start = 0,
+		sw_space_before_value,
+		sw_header_value,
+		sw_host,
+		sw_before_port,
+		sw_port,
+
+		sw_space_before_auth_mode,
+		sw_dot_before_auth_info,
+		sw_before_auth_app,
+		sw_before_auth_passwd,
+		sw_space_after_value,
+
+		sw_ignore_line,
+		sw_almost_done,
+		sw_header_done
+		} state;
+		/*
+		if (b[length-1] == LF){
+			if (b[length-2] == CR){
+				if (b[length-3] == LF){
+					if (b[length-4] == CR){
+						request_header_flag=1;
+					}
+				}
+			}
+		}
+		*/
+		if (strstr(b, CRLFCRLF) != NULL)
+			request_header_flag=1;
+		if (request_header_flag){
+			if ((p = stristr(b,"host"))!=NULL){  
+					int parse_part_flag = 1;
+					r->header_host=p;
+					state =sw_start;
+					for (i=0;(i<length+1 && parse_part_flag==1) ;i++){
+							ch=p[i];
+						switch(state){
+
+							case sw_start:
+								if ((ch >='a'&& ch<='z') || (ch >='A'&& ch <='Z') || ch =='-' || ch ==':' ){
+								break;
+								}
+								state = sw_space_before_value;
+								break;
+							case sw_space_before_value:
+								if (ch ==' '){
+								break;
+								}
+								r->header_host_start = &(p[i]);
+								state = sw_header_value;
+								break;
+
+							case sw_header_value:
+
+								if ((ch >='a'&& ch<='z') || (ch >='0'&& ch <='9') || ch == '.'){
+								break;
+								}
+								switch (ch){
+									case ':':
+									r->header_host_end = &(p[i-1]);
+									state = sw_before_port;
+									break;
+									case CR :
+									r->header_host_end = &(p[i-1]);
+									r->header_port_end = NULL;
+									state = sw_almost_done;
+									break;
+									default:
+									return HTTP_PARSE_ERROR;
+
+								}
+							case sw_before_port:
+								/*if (ch == ' ')
+								{
+									break;
+								}*/
+								state = sw_port;
+								r->header_port_start = &(p[i]);
+								break;
+							case sw_port:
+								if (ch >='0' && ch <='9'){
+									break;
+								}
+								if (ch == CR ){
+									r->header_port_end = &(p[i-1]);
+								//    goto done;
+									state = sw_almost_done;
+									break;
+								}
+								break;
+								//return HTTP_PARSE_ERROR;
+
+							case sw_almost_done:
+
+								/*if (ch == CR){
+									//break;
+									//goto done;
+									//state = sw_header_done;
+									parse_part_flag = 0;
+									break;
+								}*/
+								if (ch == LF ){
+									parse_part_flag = 0;
+									break;
+								}
+								//break;
+							//    return HTTP_PARSE_ERROR;
+							default:
+							return HTTP_PARSE_ERROR;
+
+						}
+				
+					}
+
+				}
+			if ((p = stristr(b,"content-length"))!=NULL){
+					int parse_part_flag = 1;
+					r->header_content_length=p;
+					state = sw_start;
+					for (i=0;(i<length+1 && parse_part_flag==1);i++){
+						ch = p[i];
+						switch (state){
+							case sw_start:
+								if ((ch >='a'&& ch<='z') || (ch >='A'&& ch <='Z') || ch =='-' || ch ==':' ){
+										break;
+									}
+									state = sw_space_before_value;
+									break;
+							case sw_space_before_value:
+								if (ch ==' '){
+										break;
+									}
+									r->header_content_length_start = &(p[i]);
+									state = sw_header_value;
+									break;
+							case sw_header_value:
+								if ((ch >='0'&& ch <='9')){
+									break;
+								}
+								switch (ch){
+									case CR :
+									r->header_content_length_end = &(p[i-1]);
+									state = sw_almost_done;
+									break;
+									default:
+									return HTTP_PARSE_ERROR;
+								}
+							case sw_almost_done:
+								if (ch == LF){
+									parse_part_flag=0;
+									break;
+								}
+								//return HTTP_PARSE_ERROR;
+								break;
+
+							default:
+							return HTTP_PARSE_ERROR;
+						}
+
+					}       
+				}
+
+			if (r->proxy_mode == 0){
+				if ((p = strstr(b,"X-Meteorq"))!=NULL){
+					int parse_part_flag = 1;
+					r->x_meteorq=p;
+					r->x_meteorq_start=p;
+					state = sw_start;
+					for (i=0;(i<length+1 && parse_part_flag==1);i++){
+						ch = p[i];
+						switch (state){
+
+						case sw_start :
+							if ((ch >='a'&& ch<='z') || (ch >='A'&& ch <='Z') || ch =='-' || ch ==':'){
+								break;
+							}
+							r->x_meteorq_end=&(p[i-1]);
+							state = sw_space_before_auth_mode;
+							break;
+						case sw_space_before_auth_mode:
+							if (ch !='.'){
+								break;
+							}
+						   //r->x_meteorq_start = &(p[i]);
+							r->auth_mode = p[i-1]-'0';
+							r->auth_info_token_start=&(p[i+1]);
+							state = sw_dot_before_auth_info;
+							break;
+
+						case sw_dot_before_auth_info:
+							if (ch !='|'){
+								break;
+							}
+							r->auth_info_token_end=&(p[i-1]);
+							r->auth_info_app_start=&(p[i+1]);
+							state=sw_before_auth_app;
+							break;
+
+						case sw_before_auth_app:
+							if (p[i]!='|'){
+								break;
+							}
+							r->auth_info_app_end=&(p[i-1]);
+							r->auth_info_passwd_start=&(p[i+1]);
+							state=sw_before_auth_passwd;
+							break;
+
+						case sw_before_auth_passwd:
+
+							if (p[i]!= CR ){
+								break;
+							}
+							r->auth_info_passwd_end=&(p[i-1]);
+							state=sw_almost_done;
+							break;
+						 case sw_almost_done:
+
+								if (ch == LF){
+									parse_part_flag = 0;
+									break;
+								}
+								return HTTP_PARSE_ERROR;
+
+						default:
+						return HTTP_PARSE_ERROR;
+						}
+					}
+				}
+			}
+			return HTTP_PARSE_OK;
+		}
+		return HTTP_PARSE_ERROR;
+}
+
