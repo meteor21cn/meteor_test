@@ -1,0 +1,104 @@
+##Meteor configuration file example.
+#
+# Note that in order to read the configuration file,Meteor must 
+# be started with the file path as an argument:
+#
+# ./meteor -c /path/to/meteor.conf
+#
+# Note on:
+#
+# time unit: y,M,d,h,m,s,ms (default s) 
+# Example:
+# 100    -> 100s
+# 1m30s  -> 90s 
+# 1s50ms -> 1050ms
+#
+# Note that: some configure time unit y->s,others M->ms,
+#
+# flag      ->  on,off
+# log_mode  ->  file,console
+# log_level ->  error,warning,notice,info,debug
+# host      ->  ipv4 or hostname,like 192.168.1.101,www.baidu.com ...
+# port      ->  1-65535
+# ...
+#
+# Note:
+# almost all only take 1 parameter expect listen_port in worker block;
+# if listen_port more than 1 parameter, it means to add a same worker
+# block but has a different listen_port:
+# 
+# one worker(process) only a listen port->a listen_port means a worker
+# Make sure num of worker_processes equal to num of workers???
+#
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+#user  nobody;                  # system user: root etc...
+
+daemon_mode            off;     # on|off, default on, meteor run mode
+#worker_processes       4;      # should be number of cpus, default 4
+#worker_max_sessions    4096;   # default 4096
+
+#pid   ../logs/meteor.pid;      # pid_file_name, default ../logs/meteor.pid
+
+sys_log {
+    mode    file;               # file, console. default file
+    level   error;              # error, warning, notice, info, debug. default error
+    file    "../logs/sys.log";  # default: ../logs/sys.log
+    rotate  1d;                 # 1d, 1h, 5m, etc. default 1d. the min value 1s, can't have ms
+}
+
+flow_log {
+    file    "../logs/flow.log"; #default: ../logs/flow.log
+    rotate  22d;                 #1d, 1h, 5m. default 1d. the min value:1s,can't have ms
+}
+
+redis_server {
+   #host  172.18.12.246;        #ipv4 or hostname,default local ip
+    port  6379;                 #default 6379.
+}
+
+timer{
+    order_check          5s;    # default 5s. 
+    order_update         5s;    # should biger than order_check. default 5s
+    order_event_check    1s;    # default 1s
+    order_frozen         3h;    # default 3h
+    order_idle           5m;    # should less than order_frozen. default 5m 
+    session_idle         1m;    # should less than order_idle,default 1m
+    activity_check       1s;    # default 1s
+    activity_update      1s;    # should bigger than activity_check. default 1s
+    pool_defrag          1s;    # default 1s
+    pool_defrag_size     100;   # default 100
+    worker_stat_update   5s;    # default 5s.  min->1s,can't have ms 
+}
+
+# worker can be compound or independent
+worker{
+    #name           worker;               #worker-name,default worker1,worker2,...
+    outer_host     172.18.12.181;        #default local ip
+    #listen_host    172.18.12.181;        #default local ip
+    listen_port 1080 1081 1082 1083;  # default 8001 8002 ...
+    backlog         4096;                 # default 100
+    #recv_buf       8192;                 # default 8192
+    #send_buf       8192;                 # default 8192
+    #reuseaddr      on;                   # on|off. default on
+    #keepalive      off;                  # on|off. default off
+    #max_sessions   4096;                 # if set, will override to the global worker_max_sessions
+    max_domains    1000;                  # default 1000
+    udp_port_start  2000;
+    udp_port_end    3000;
+}
+
+#worker{
+   #name        vedio-worker;
+  # listen_port 1081;
+ #  recv_buf  1000;
+#}
+
+#worker{
+ #  listen_port 1082;
+  # recv_buf 10000;
+#}
+
+#worker{
+#   listen_port 1083;
+#}

@@ -1,0 +1,211 @@
+/**
+* based on https://github.com/google/streamhtmlparser
+* apt-get install libtool
+* git clone https://github.com/google/streamhtmlparser.git
+* ./autogen.sh  &  ./configure  & make  &  make install
+* gcc XXX -lstreamhtmlparser  (dynamic link with /usr/local/lib/libstreamhtmlparser.so)
+*/
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <time.h>
+#include <streamhtmlparser/htmlparser.h>
+
+typedef struct{
+    htmlparser_ctx *ctx;
+
+    char *url;
+    int inside_url;
+    int quoted;
+    int last_attr_type;
+} htmlparser_ctx_ext;
+//streamhtmlparser/htmlparser.h
+
+/* Returns the contents of the current attribute value.
+ *
+ * Returns NULL if not inside an attribute value.
+ */
+//const char *htmlparser_value(htmlparser_ctx *ctx);
+
+/* Returns true if the parser is inside an attribute value and the value is
+ * surrounded by single or double quotes. */
+//int htmlparser_is_attr_quoted(htmlparser_ctx *ctx);
+
+/* Returns the current attribute type.
+ *
+ * The attribute type can be one of:
+ *   HTMLPARSER_ATTR_NONE - not inside an attribute.
+ *   HTMLPARSER_ATTR_REGULAR - Inside a normal attribute.
+ *   HTMLPARSER_ATTR_URI - Inside an attribute that accepts a uri.
+ *   HTMLPARSER_ATTR_JS - Inside a javascript attribute.
+ *   HTMLPARSER_ATTR_STYLE - Inside a css style attribute.
+ */
+//int htmlparser_attr_type(htmlparser_ctx *ctx);
+//htmlparser_attr_type(ctx) == HTMLPARSER_ATTR_URI
+
+/* Returns the position inside the current attribute value (-1 outside)
+ */
+//int htmlparser_value_index(htmlparser_ctx *ctx);
+//htmlparser_value_index(ctx) != -1
+
+int init_htmlparser(htmlparser_ctx_ext_t *ctx_ext) {
+    ctx_ext->ctx = htmlparser_new();
+    ctx_ext->inside_url = 0;
+    ctx_ext->quoted = 0;
+    ctx_ext->last_attr_type = -1;
+    ctx_ext->rewrite_first = 0;
+}
+
+int rewrite_url_stream_html(htmlparser_ctx_ext *ctx_ext, 
+              char *in_str, int in_size, 
+              char **out_str, int *out_size) {
+
+  int i;
+  for(i = 0; i < in_size; i++) {
+    char c = in_str[i];
+    htmlparser_parse_chr(ctx_ext->ctx, c);
+
+    // printf("%c\t",c);
+    // printf("###VALUE_INDEX###%d\t",htmlparser_value_index(ctx_ext->ctx));
+    // printf("###ATTR_TYPE###%d\t",htmlparser_attr_type(ctx_ext->ctx));
+    // printf("###VALUE###%s\n",htmlparser_value(ctx_ext->ctx)?htmlparser_value(ctx_ext->ctx):"(nullll)");
+   
+    if(ctx_ext->last_attr_type == HTMLPARSER_ATTR_URI) {
+        if( (htmlparser_is_attr_quoted(ctx_ext->ctx) || htmlparser_value_index(ctx_ext->ctx) != -1 )
+            && htmlparser_attr_type(ctx_ext->ctx) == HTMLPARSER_ATTR_URI) {
+
+              if(htmlparser_is_attr_quoted(ctx_ext->ctx))    ctx_ext->quoted = 1;
+
+              ctx_ext->inside_url = 1;
+              ctx_ext->url = htmlparser_value(ctx_ext->ctx);
+        }
+        else {
+          if(ctx_ext->inside_url)  {
+              ctx_ext->inside_url = 0;
+              printf("URL:     %s\n", ctx_ext->url);
+
+              //TODO: rewrite ctx_ext->url
+
+              if(ctx_ext->quoted) {
+                ctx_ext->quoted = 0;
+                strcat(*out_str, "\"");
+                (*out_size) ++;
+              }
+              
+              strcat(*out_str, ctx_ext->url);
+              (*out_size) += strlen(ctx_ext->url);
+              ctx_ext->last_attr_type = htmlparser_attr_type(ctx_ext->ctx);
+              printf("last_attr_type: %d\n", ctx_ext->last_attr_type);
+          }
+        }
+       
+    }
+    if(ctx_ext->last_attr_type != HTMLPARSER_ATTR_URI) {
+        (*out_str)[ (*out_size) ++ ] = c;
+        ctx_ext->last_attr_type = htmlparser_attr_type(ctx_ext->ctx);
+    }
+  }
+  (*out_str)[ (*out_size) ++ ] = '\0';
+
+  return 1;
+}
+
+static void read_file(FILE* fp, char** output, int* length) {
+#include <sys/stat.h>
+#include <malloc.h>
+    int fileno(FILE*);
+    struct stat filestats;
+    int fd = fileno(fp);
+    fstat(fd, &filestats);
+    *length = filestats.st_size;
+    *output = (char*)malloc(*length + 1);
+    int start = 0;
+    int bytes_read;
+    while ((bytes_read = fread(*output + start, 1, *length - start, fp))) {
+        start += bytes_read;
+    }
+}
+
+int main()
+{
+  //char *str = "<html><body><title></title><a href=http://www.baidu.com alt=\"123\">url</a></body></html>";
+  FILE *fp = fopen("index.html.1","r");
+  if(!fp)
+      printf("fopen() error\n");
+  char *input;
+  int len;
+  read_file(fp,&input,&len);
+
+  char *pos=input;
+
+  char *out_str = malloc(4096);
+  int  out_size;
+
+  char *stream;
+  int length;
+  
+  size_t line = 2048;
+
+  srand((unsigned int)time(NULL));
+
+  htmlparser_ctx_ext ctx_ext;
+  init_htmlparser(&ctx_ext);
+
+  do {
+
+        int size = rand()%300 + 100; // 100~399
+
+        if (len < size)
+            size = len;
+        //parse_html(ctx, pos, size);
+        out_size = 0;
+        
+        rewrite_url_stream_html(&ctx_ext, pos, size, &out_str, &out_size);
+
+        if(out_size > 0 )  {
+          printf("out_str: %s\n", out_str);
+          strcpy(out_str, "");
+        }
+
+        pos += size;
+        len -= size;
+  }while(len > 0);
+
+  // press CTRL+D to end !!!
+
+  // while((length = getline(&stream, &line, stdin)) != EOF) {
+  //     //remove '\n'
+  //     length--; 
+  //     stream[length] ='\0';
+  //     out_size = 0;
+  //     int len = rewrite_url_stream_html(&ctx_ext, stream, length, &out_str, &out_size);
+  //     if(len > 0 )  {
+  //       printf("out_str: %s\n", out_str);
+  //       strcat(total, out_str);
+  //       strcpy(out_str, "");
+  //     }
+  // }
+  // printf("\n\n---------\ntotal: %s\n", total);
+  
+  return 0;
+}
+
+/*
+input
+<html> 
+  <body $> 
+    <title> $ </title> 
+    <a href="$" alt="$"> url </a> 
+  </body> 
+</html>
+
+
+output
+<html> 
+  <body [[ tag=body ]]> 
+    <title> [[ tag=title ]] </title> 
+    <a href="[[ tag=a attr=href ]]" alt="[[ tag=a attr=alt ]]"> url </a> 
+  </body> 
+</html>
+*/

@@ -1,0 +1,73 @@
+#ifndef METEOR_AUTH_H_
+#define METEOR_AUTH_H_
+
+#include <string.h>
+#include <time.h>
+#include <hiredis/hiredis.h>
+
+#include "meteor.h"
+#include "sockd.h"
+#include "../lib/md5c.h"
+
+#define MTR_ORDER_AUTH_SUCCESS 		0x00	//success
+#define MTR_ORDER_AUTH_ERR_UNKOWN	0xff	//unknow error
+#define MTR_ORDER_AUTH_ERR_ORDER_STATUS	0xfe	//order status not available
+#define MTR_ORDER_AUTH_ERR_SYS_BUSY	0xfd	//sys busy
+#define MTR_ORDER_AUTH_ERR_FROZEN		0xfc	//token frozen
+#define MTR_ORDER_AUTH_ERR_NO_FOUND	0xfb	//token no found or expired
+
+
+#define HTTP_AUTH_ERR_AT_FLAG		0xfa	//at-flag error
+#define HTTP_AUTH_ERR_AUTH_MODE		0xf9	//auth mode error
+#define HTTP_AUTH_ERR_AUTH_FAILED		0xf8	//error user or passwd, app_pname
+#define HTTP_CONNECT_ERR			0xf7	//error connect remote
+
+#define HTTP_AUTH_NONE			0x00
+#define HTTP_AUTH_USER_PASSWORD		0x01
+
+
+#define SOCKS_METHOD_VERSION		0x01
+
+#define SOCKS_AUTH_ERR_VERSION		0xfa    //method version error
+#define SOCKS_AUTH_ERR_NO_PASS		0xf9    //error user or passwd, app_pname
+
+#define SOCKS_AUTH_NONE			0x00
+#define SOCKS_AUTH_USER_PASSWORD		0x02
+#define SOCKS_AUTH_FLOW_PACKAGE		0x81
+#define SOCKS_AUTH_NOT_ACCEPTABLE		0xFF
+
+#define AUTH_SOCKS				1
+#define AUTH_HTTP				2
+
+struct mtr_auth_reply_s
+{
+	unsigned char method_version;
+	unsigned char status;
+	unsigned char order_status;
+	int order_balance;
+	uint32_t used_today;
+	long company_balance;
+} ;
+
+int init_activity_if_exist(  socks_worker_process_t *process, socks_order_t *order, long nowms );
+
+int add_to_order_cache( socks_worker_process_t *process, socks_order_t *order );
+
+int add_to_activity_cache( socks_worker_process_t *process, flow_pool_activity_t *activity );
+
+int add_to_session_cache( socks_worker_process_t *process, socks_order_t *order, socks_session_t *session );
+
+int check_activity_if_exist( socks_worker_process_t *process, socks_order_t *order,
+	mtr_auth_reply_t *reply, long nowms );
+
+int check_passwd(unsigned int proxy_mode, unsigned char *token, unsigned char *addr, unsigned char *key, unsigned char *passwd);
+
+int check_order( unsigned int proxy_mode, socks_worker_process_t *process, socks_order_t *order, 
+	socks_session_t *session, long nowms );
+
+mtr_auth_reply_t * auth_order(unsigned int proxy_mode, socks_worker_process_t *process, 
+	socks_connection_t *con, mtr_auth_reply_t *reply);
+
+#endif //METEOR_AUTH_H_
+
+

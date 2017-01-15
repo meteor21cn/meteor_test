@@ -1,0 +1,68 @@
+LDFLAGS = -lhiredis -lpthread -lm
+LIB = ../lib/
+OBJECTS = meteor.o sockd.o sockd_udp.o sockd_tcp.o sockd_auth.o order.o rbtree.o \
+		redis.o md5c.o log.o meteor_process.o  meteor_conf.o http_proxy.o \
+		http_auth.o meteor_auth.o http_parse.o http_rewrite_url.o http_transform.o
+
+all:meteor 
+meteor : ${OBJECTS}
+	cc -o  meteor -g ${OBJECTS} ${LDFLAGS} 
+
+meteor.o:meteor.c meteor.h
+	cc -c  -g meteor.c
+
+sockd.o:sockd.c sockd.h
+	cc -c  -g sockd.c
+
+sockd_udp.o: sockd_udp.c sockd_udp.h
+	cc -c -g sockd_udp.c
+
+sockd_tcp.o: sockd_tcp.c sockd_tcp.h
+	cc -c -g sockd_tcp.c
+
+sockd_auth.o: sockd_auth.c sockd_auth.h
+	cc -c -g sockd_auth.c
+
+order.o: order.c order.h
+	cc -c -g order.c
+
+http_rewrite_url.o:http_rewrite_url.c http_rewrite_url.h
+	cc -c -g http_rewrite_url.c
+
+rbtree.o:sockd_rbtree.c sockd_rbtree.h
+	cc -c  -g sockd_rbtree.c -o rbtree.o
+
+redis.o:sockd_redis.c sockd_redis.h
+	cc -c  -g sockd_redis.c -o redis.o
+	
+md5c.o:${LIB}md5c.c ${LIB}md5c.h
+	cc -c  -g ${LIB}md5c.c
+
+log.o: log.c log.h
+	cc -c -g log.c
+
+meteor_process.o: meteor_process.c meteor_process.h
+	cc -c -g meteor_process.c
+
+meteor_conf.o:meteor_conf.c meteor_conf.h sockd.h meteor.h
+	cc -c -g   meteor_conf.c
+
+meteor_auth.o:meteor_auth.c meteor_auth.h
+	cc -c -g meteor_auth.c
+
+http_proxy.o:http_proxy.c http_proxy.h
+	cc -c -g http_proxy.c
+
+http_auth.o:http_auth.c http_auth.h
+	cc -c -g http_auth.c
+
+http_parse.o:http_parse.c http_parse.h
+	cc -c -g http_parse.c
+
+http_transform.o:http_transform.c http_transform.h
+	cc -c -g http_transform.c
+
+.PHONY:clean
+
+clean:
+	rm -f *.o meteor

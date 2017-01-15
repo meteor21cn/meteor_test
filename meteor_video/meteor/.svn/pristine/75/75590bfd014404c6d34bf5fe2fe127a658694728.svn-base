@@ -1,0 +1,730 @@
+#include "sockd_udp.h"
+
+static int _chk_udp_header( unsigned char *data );
+static int _create_udp_connect_ipv4(socks_worker_process_t *process, socks_udp_connection_t *udp_conn, 
+	socks_udp_connection_t * udp_remote_conn, int up_direct );
+static int _create_udp_associate_ipv4(socks_worker_process_t *process, socks_udp_connection_t *udp_conn, int up_direct );
+static int _get_udp_addr_pos(socks_udp_connection_t * con, struct sockaddr_in * addr, int up_direct);
+
+unsigned char *_get_udp_header( unsigned char *data,  socks_udp_header_t *header, int cmd_type)
+{
+	//cmd_type: 1 for 0x03, 0 for 0x04
+	memset(header, 0, sizeof(*header));
+	memcpy(&header->reserved, data, sizeof(header->reserved));
+	data += sizeof(header->reserved);
+
+	memcpy(&header->frag, data, sizeof(header->frag));
+	data += sizeof(header->frag);
+
+	data = (unsigned char *)copy_buf_to_socks_host(&header->host, ( unsigned char *)data);
+	if ( cmd_type ){
+		return data;
+	}
+
+	memcpy(&header->session, (unsigned char*)data, sizeof(header->session));
+	data += sizeof(header->session);
+	return (unsigned char *) data;
+	
+}
+
+static int _chk_udp_header( unsigned char *data )
+{
+	if( data[0]!=0 || data[1]!=0 || data[2] !=0 )
+		return -1;
+	if( data[3] != SOCKS_ATYPE_IPV4 && data[3] != SOCKS_ATYPE_IPV6 && data[3] != SOCKS_ATYPE_DOMAIN )
+		return -1;
+	return 0;
+}
+
+unsigned char * _copy_udp_header_to_buf( socks_udp_header_t *header, unsigned char *buf, int cmd_type)
+{
+	/* reserved */
+	//cmd_type: 1 for 0x03, 0 for 0x04
+	memcpy(buf, &header->reserved, sizeof(header->reserved));
+	buf += sizeof(header->reserved);
+	memcpy(buf, &header->frag, sizeof(header->frag));
+	buf += sizeof(header->frag);
+
+	buf = (unsigned char *)copy_socks_host_to_buf( &header->host, buf );
+	if ( cmd_type ){
+		return (unsigned char *)buf;
+	}
+	
+	memcpy(buf, &header->session, sizeof(header->session));
+	buf += sizeof(header->session);
+	return (unsigned char *)buf;
+}
+
+void _hold_and_wait_udp_data_cb( socks_worker_process_t *process, int fd, int events,  void *arg)
+{
+    socks_connection_t *con = (socks_connection_t *)arg;
+	int len = _recv_data( con, RECV_BUF_SIZE-con->data_length);
+	if( len > 0 )
+	{
+		do_stat_order_flow( process, con->session, len+ETHERNET_IP_TCP_HEADER_SIZE, 1, 0 );
+		sys_log(LL_DEBUG, "[ %s:%d ] client control connection received some data, fd:%d, len:%d", __FILE__, __LINE__, fd, len );
+		_clean_recv_buf( con );
+	}
+	else if( len <0 || con->eof ) 
+	{
+		//net disconnected. close session
+		sys_log(LL_ERROR, "[ %s:%d ] client control connection eof:%d, fd:%d", __FILE__, __LINE__, con->eof, fd );
+		close_session( process, con->session);
+		return;
+	}
+	else
+	{
+		sys_log(LL_DEBUG, "[ %s:%d ] client control connection, no data received , fd: %d", __FILE__, __LINE__, fd );
+	}
+}
+
+
+void _send_udp_connect_result( socks_worker_process_t *process, socks_connection_t *con, 
+	socks_udp_connection_t *udp_client, socks_command_reply_t *reply, int result , int cmd)
+{
+	
+	if( result == 0 ){ // 建立udp socket成功
+		reply->status= SOCKS_CMD_SUCCESS;
+		reply->host.atype = SOCKS_ATYPE_IPV4;
+		
+		// 应返回外网ip给客户端
+		//inet_aton( udp_client->local_hostname, &reply->host.addr.ipv4);  
+		memcpy( &reply->host.addr.ipv4, &process->config->outer_addr_cache, sizeof(struct in_addr) );  
+	    reply->host.port = htons(udp_client->local_port);
+    	if (cmd == SOCKS_COMMAND_UDP_CONNECT){
+    		memcpy( &reply->session, &con->session, sizeof(con->session));
+    	}
+		send_cmd_reply( process, con, reply );
+		_clean_recv_buf( con );
+		_change_session_event( process->epoll_fd, con, con->fd, EPOLLIN|EPOLLHUP|EPOLLERR, _hold_and_wait_udp_data_cb );
+		return;
+	}
+	
+	// send udp socket create failed msg to client
+	if( result == ENETUNREACH ) // 101
+		reply->status= SOCKS_CMD_ERR_NET;
+	else if( result == ECONNREFUSED )	//111
+		reply->status= SOCKS_CMD_ERR_REFUSE;
+	else if( result == EHOSTUNREACH )
+		reply->status= SOCKS_CMD_ERR_HOST;
+	else
+		reply->status= SOCKS_CMD_ERR_FAIL;
+	reply->host.atype = SOCKS_ATYPE_IPV4;
+	send_cmd_reply( process, con, reply );
+	close_session( process, con->session);
+
+}
+
+void _do_command_udp( socks_worker_process_t *process, socks_connection_t *con, 
+	socks_command_t *cmd, socks_command_reply_t *reply )
+{
+	socks_udp_connection_t *udp_remote, *udp_client;
+	if(cmd->host.atype == SOCKS_ATYPE_IPV4){
+		//socks_connection_t *udp_client = (socks_connection_t *)malloc(sizeof(socks_connection_t));
+		udp_client = (socks_udp_connection_t*)malloc(sizeof(socks_udp_connection_t));
+		if( udp_client == NULL ){
+			sys_log(LL_ERROR, "[ %s:%d ] malloc udp_client error,fd: %d", __FILE__, __LINE__, con->fd );
+			reply->version = SOCKS_VERSION_5;
+			reply->host.atype = SOCKS_ATYPE_IPV4;
+			reply->status = SOCKS_CMD_ERR_FAIL;
+			send_cmd_reply( process, con, reply );
+			close_session( process, con->session);
+			return;
+		}
+		memset( (void *)udp_client, 0,	sizeof(socks_udp_connection_t) );
+		con->session->udp_client = udp_client;
+		udp_client->session = con->session;
+
+		// TODO: 考虑到手机端NAT问题，应该强制设为con->peer_host?
+		size_t hosta_len = strlen(con->peer_hostname);
+		memcpy( udp_client->peer_hostname, con->peer_hostname, hosta_len );
+		udp_client->peer_hostname[hosta_len]= '\0';
+		memcpy( &udp_client->peer_host, &con->peer_host, sizeof(socks_host_t) ); //fixme
+		udp_client->peer_host.port = cmd->host.port;
+
+		if (cmd->cmd == SOCKS_COMMAND_UDP_CONNECT){
+			// create udp_remote peer connection
+			udp_remote = (socks_udp_connection_t *)malloc(sizeof(socks_udp_connection_t));
+			if( udp_remote == NULL ){
+				sys_log(LL_ERROR, "[ %s:%d ] malloc remote error,fd: %d", __FILE__, __LINE__, con->fd );
+				close_session( process, udp_client->session);
+				return;
+			}
+			memset( (void *)udp_remote, 0, sizeof(socks_udp_connection_t) );
+			udp_client->session->udp_remote= udp_remote;
+			udp_remote->session = udp_client->session;
+			udp_remote->peer_conn = udp_client;
+			udp_client->peer_conn = udp_remote;
+			
+			memcpy( &udp_remote->peer_host, &udp_client->peer_host, sizeof(udp_client->peer_host) );
+			memcpy( udp_remote->peer_hostname, udp_client->peer_hostname, hosta_len );
+			sys_log(LL_DEBUG, "[ %s:%d ] remote: %s:%d", __FILE__, __LINE__, udp_remote->peer_hostname, ntohs(udp_remote->peer_host.port));
+			
+		}
+/*		
+		char * hosta = inet_ntoa( cmd->host.addr.ipv4 );
+		if( strcmp( hosta, "0.0.0.0" ) == 0 ){ //默认地址是，将tcp controller的对端ip作为udp client的对端ip
+			size_t hosta_len = strlen(con->peer_hostname);
+			memcpy( udp_client->peer_hostname, con->peer_hostname, hosta_len );
+			udp_client->peer_hostname[hosta_len]= '\0';
+			memcpy( &udp_client->peer_host, &con->peer_host, sizeof(socks_host_t) ); //fixme
+			udp_client->peer_host.port = cmd->host.port;
+		}
+		else{
+			size_t hosta_len = strlen(hosta);
+			memcpy( udp_client->peer_hostname, hosta, hosta_len );
+			udp_client->peer_hostname[hosta_len]= '\0';
+			memcpy( &udp_client->peer_host, &cmd->host, sizeof(socks_host_t) );//fixme
+		}
+*/	
+		sys_log(LL_DEBUG, "[ %s:%d ] udp_associate command: %s:%d", __FILE__, __LINE__, udp_client->peer_hostname, ntohs(udp_client->peer_host.port));
+
+		if (cmd->cmd == SOCKS_COMMAND_UDP_ASSOCIATE)
+		{
+			int ret = _create_udp_associate_ipv4( process, udp_client, 1 ); 
+			_send_udp_connect_result( process, con, udp_client, reply, ret, cmd->cmd);
+		}
+		else{
+			int ret = _create_udp_connect_ipv4( process, udp_client, udp_remote,1 ); 
+			_send_udp_connect_result( process, con, udp_client, reply, ret, cmd->cmd );
+		}
+	}
+	else
+	{
+		sys_log(LL_ERROR, "[ %s:%d ] atype: 0x%x unsupported,fd: %d", __FILE__, __LINE__, cmd->host.atype, con->fd );
+		reply->version = SOCKS_VERSION_5;
+		reply->host.atype = SOCKS_ATYPE_IPV4;
+		reply->status = SOCKS_CMD_ERR_ATYPE;
+		send_cmd_reply( process, con, reply );
+		close_session( process, con->session);
+		return;
+	}
+
+}
+
+
+static int _create_udp_associate_ipv4(socks_worker_process_t *process, socks_udp_connection_t *udp_conn, int up_direct )
+{
+
+	int fd = udp_conn->fd = socket(AF_INET, SOCK_DGRAM, 0);
+
+	if ( fd < 0) {
+		sys_log(LL_ERROR, "[ %s:%d ] create %s udp error, fd:%d, %s:%d", __FILE__, __LINE__, up_direct?"client":"remote", fd, 
+			udp_conn->peer_hostname, ntohs(udp_conn->peer_host.port) );
+		return -1;
+	}
+
+	int flags = fcntl( fd, F_GETFL, 0);
+	if (flags < 0) {
+	    sys_log(LL_ERROR, "[ %s:%d ] get %s socket flags errorfd:%d, %s:%d", __FILE__, __LINE__, up_direct?"client":"remote", fd, 
+			udp_conn->peer_hostname, ntohs(udp_conn->peer_host.port) );
+		return -1;
+	}
+
+	if (fcntl( fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+	sys_log(LL_ERROR, "[ %s:%d ] set %s udp nonblock error,fd:%d, %s:%d", __FILE__, __LINE__, up_direct?"client":"remote", fd, 
+			udp_conn->peer_hostname, ntohs(udp_conn->peer_host.port) );
+		return -1;
+	}
+	
+	int value = process->config->reuseaddr ==1?1:0;
+	if (setsockopt( fd, SOL_SOCKET, SO_REUSEADDR, (void *) &value, sizeof(int)) == -1)
+	{
+		sys_log(LL_ERROR, "[ %s:%d ] set %s udp SO_REUSEADDR fail, fd:%d", __FILE__, __LINE__, up_direct?"client":"remote", fd );
+	}
+
+	struct sockaddr_in s_addr;
+	memset(&s_addr, 0, sizeof (s_addr));
+	s_addr.sin_family = AF_INET;
+	inet_aton( udp_conn->session->client->local_hostname, &s_addr.sin_addr);  
+	// TODO: 实现配置的UDP端口范围
+	/*s_addr.sin_port = 0;
+	if( bind( fd, (  struct sockaddr*)&s_addr, sizeof(s_addr)) == -1 ){
+		sys_log(LL_ERROR, "[ %s:%d ] bind %s udp failed, peer:%s:%d,  fd=%d", __FILE__, __LINE__, up_direct?"client":"remote", 
+			udp_conn->peer_hostname, ntohs(udp_conn->peer_host.port), fd); 
+		return errno;
+	}*/
+	int port, ret = -1;
+	while ( ret == -1){
+		port = udp_port_pool_pop(process);
+		if (port < 0){
+			sys_log(LL_DEBUG, "[ %s:%d ] no more udp port available, bind %s udp failed, peer:%s,  fd=%d", 
+				__FILE__, __LINE__, up_direct?"client":"remote", udp_conn->peer_hostname, fd);
+			return -1;
+		}
+
+		s_addr.sin_port = htons(port);
+		ret = bind( fd, (  struct sockaddr*)&s_addr, sizeof(s_addr));
+		if( ret == -1 ){
+			sys_log(LL_ERROR, "[ %s:%d ] bind %s udp failed, peer:%s:%d,  fd=%d", __FILE__, __LINE__, up_direct?"client":"remote", 
+				udp_conn->peer_hostname, ntohs(udp_conn->peer_host.port), fd); 
+		}
+	}
+
+	socklen_t len = sizeof(s_addr);
+	getsockname( fd, (struct sockaddr*)&s_addr, &len);
+	copy_sockaddr_to_hostname( &s_addr.sin_addr, &udp_conn->local_hostname[0] );
+	udp_conn->local_port = ntohs(s_addr.sin_port);
+	sys_log(LL_DEBUG, "[ %s:%d ] bind %s udp ok, local: %s:%d, fd:%d", __FILE__, __LINE__, up_direct?"client":"remote", udp_conn->local_hostname, udp_conn->local_port, fd); 
+
+	udp_conn->session->stage = SOCKS_STAGE_UDP_DATA;
+	_clean_udp_recv_buf( udp_conn );
+	_register_session_event( process->epoll_fd, (socks_connection_t *)udp_conn, fd, EPOLLIN|EPOLLHUP|EPOLLERR, _udp_data_transform_cb );
+
+ 	return 0;
+	
+}
+
+static int _create_udp_connect_ipv4(socks_worker_process_t *process, socks_udp_connection_t *udp_conn,
+	socks_udp_connection_t * udp_remote_conn, int up_direct )
+{
+	//client udp
+	socks_udp_listen_t udp_listen;
+	int ret = get_udp_listen( process, &udp_listen);
+	if (ret < 0){
+		sys_log(LL_ERROR, "can get any udp listen port!");
+		return -1;
+	}
+
+	int fd = udp_conn->fd = udp_listen.fd;
+	struct sockaddr_in s_addr;
+	memset(&s_addr, 0, sizeof (s_addr));
+	s_addr.sin_family = AF_INET;
+	inet_aton( udp_conn->session->client->local_hostname, &s_addr.sin_addr);  
+	s_addr.sin_port = htons(udp_listen.port);
+
+	socklen_t len = sizeof(s_addr);
+	getsockname( fd, (struct sockaddr*)&s_addr, &len);
+	copy_sockaddr_to_hostname( &s_addr.sin_addr, &udp_conn->local_hostname[0] );
+	udp_conn->local_port = ntohs(s_addr.sin_port);
+	sys_log(LL_DEBUG, "[ %s:%d ] bind %s udp ok, local: %s:%d, fd:%d", __FILE__, __LINE__, up_direct?"client":"remote", udp_conn->local_hostname, udp_conn->local_port, fd); 
+
+	udp_conn->session->stage = SOCKS_STAGE_UDP_DATA;
+	_clean_udp_recv_buf( udp_conn );
+
+ 	//remote udp
+ 	fd = udp_remote_conn->fd = socket(AF_INET, SOCK_DGRAM, 0);
+
+	if ( fd < 0) {
+		sys_log(LL_ERROR, "[ %s:%d ] create remote udp error, fd:%d, %s:%d", __FILE__, __LINE__, fd, 
+			udp_remote_conn->peer_hostname, ntohs(udp_remote_conn->peer_host.port) );
+		return -1;
+	}
+
+	int flags = fcntl( fd, F_GETFL, 0);
+	if (flags < 0) {
+	    sys_log(LL_ERROR, "[ %s:%d ] get remote socket flags errorfd:%d, %s:%d", __FILE__, __LINE__, fd, 
+			udp_remote_conn->peer_hostname, ntohs(udp_remote_conn->peer_host.port) );
+		return -1;
+	}
+
+	if (fcntl( fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+	sys_log(LL_ERROR, "[ %s:%d ] set remote udp nonblock error,fd:%d, %s:%d", __FILE__, __LINE__, fd, 
+			udp_remote_conn->peer_hostname, ntohs(udp_remote_conn->peer_host.port) );
+		return -1;
+	}
+	
+	int value = process->config->reuseaddr ==1?1:0;
+	if (setsockopt( fd, SOL_SOCKET, SO_REUSEADDR, (void *) &value, sizeof(int)) == -1)
+	{
+		sys_log(LL_ERROR, "[ %s:%d ] set remote udp SO_REUSEADDR fail, fd:%d", __FILE__, __LINE__, fd );
+	}
+
+	memset(&s_addr, 0, sizeof (s_addr));
+	s_addr.sin_family = AF_INET;
+	inet_aton( udp_remote_conn->session->client->local_hostname, &s_addr.sin_addr);  
+	// TODO: 实现配置的UDP端口范围
+	s_addr.sin_port = 0;
+	if( bind( fd, (  struct sockaddr*)&s_addr, sizeof(s_addr)) == -1 ){
+		sys_log(LL_ERROR, "[ %s:%d ] bind remote udp failed, peer:%s:%d,  fd=%d", __FILE__, __LINE__, 
+			udp_remote_conn->peer_hostname, ntohs(udp_remote_conn->peer_host.port), fd); 
+		return errno;
+	}
+
+	len = sizeof(s_addr);
+	getsockname( fd, (struct sockaddr*)&s_addr, &len);
+	copy_sockaddr_to_hostname( &s_addr.sin_addr, &udp_remote_conn->local_hostname[0] );
+	udp_remote_conn->local_port = ntohs(s_addr.sin_port);
+	sys_log(LL_DEBUG, "[ %s:%d ] bind remote udp ok, local: %s:%d, fd:%d", __FILE__, __LINE__,
+		udp_remote_conn->local_hostname, udp_remote_conn->local_port, fd);
+
+	//insert udp_session_cache, key: session
+	rb_node_t * node = rb_list_pop( &process->rb_node_pool );
+	if( !node ){
+		sys_log(LL_ERROR, "[ %s:%d ] no memory for udp_session_cache rb_node", __FILE__, __LINE__);
+		return -1;
+	}
+	
+	node->key.lkey = (long)udp_remote_conn->session;
+	//memcpy(&node->key.lkey, &udp_remote_conn->session, sizeof(udp_remote_conn->session));
+	ret = rb_tree_insert_node( &process->udp_session_cache, node, 0 );
+	if (ret < 0)
+	{
+		sys_log(LL_ERROR, "[ %s:%d ] insert into udp_session_cache failed !", __FILE__, __LINE__);
+		return -1;
+	}
+
+
+
+	udp_remote_conn->session->stage = SOCKS_STAGE_UDP_DATA;
+	_clean_udp_recv_buf( udp_remote_conn );
+	_register_session_event( process->epoll_fd, (socks_connection_t *)udp_remote_conn, fd, EPOLLIN|EPOLLHUP|EPOLLERR, _udp_data_transform_cb_2 );
+
+ 	return 0;
+	
+}
+
+
+/* while data from client or remote host, then transform to the other peer
+   对于meteor流量网关来说，为了节省udp端口资源, 接收客户端和远端服务器都用同一个udp端口，
+   根据packet的来源ip区分是客户端还是远端的数据包, 另外与客户端交互的packet是按socks5协议
+   追加了socks_udp_header的，需要校验格式
+*/
+void _udp_data_transform_cb( socks_worker_process_t *process, int fd, int events,  void *arg)
+{
+    socks_udp_connection_t *con = (socks_udp_connection_t *)arg;
+
+	if( con->session->stage != SOCKS_STAGE_UDP_DATA ){
+		sys_log(LL_ERROR, "[ %s:%d ] error udp stage: %d, fd:%d", __FILE__, __LINE__, con->session->stage, fd );
+		close_session( process, con->session);
+		return;
+	}
+	
+	if( !(events & EPOLLIN)){
+		return;
+	}
+	
+	int up_direct =  0;
+	struct sockaddr_in addr;  
+	int addr_len = sizeof(struct sockaddr_in);
+	_clean_udp_recv_buf (con); // 需要确认数据包是否1次性可以读完，应该是一次性的
+	int len = recvfrom( fd, con->buf,UDP_RECV_BUF_SIZE-con->data_length, 0 , (struct sockaddr *)&addr ,&addr_len); 
+
+	if( len <= 0 )	{  // recvfrom error
+		sys_log(LL_ERROR, "[ %s:%d ] recv udp from: %s:%d error, fd:%d, len:%d", __FILE__, __LINE__, 
+			con->peer_hostname, ntohs(con->peer_host.port), fd, len);
+		return;
+	}
+	
+	con->data_length += len;
+	char * peer_hostname = inet_ntoa( addr.sin_addr );
+	int peer_port = ntohs(addr.sin_port);
+	sys_log(LL_DEBUG, "[ %s:%d ] recv udp from: %s:%d, fd:%d, len:%d", __FILE__, __LINE__, 
+		peer_hostname, peer_port, fd, len);
+
+	if( strcmp(con->session->udp_client->peer_hostname, peer_hostname )==0 ){
+		up_direct = 1;
+		// 考虑到手机端做了NAT转换,应用udp包的实际端口覆盖cmd中接收的地址端口
+		con->session->udp_client->peer_host.port = addr.sin_port; 
+	}
+	else{
+		if( _chk_udp_header(con->buf )==0 ){
+			// 来源地址不是客户端，但数据包有udp header，疑似非法packet，忽略这类数据包，所以也无需统计流量
+			sys_log(LL_ERROR, "[ %s:%d ] recv no-approved udp from: %s:%d error, fd:%d, len:%d", __FILE__, __LINE__, 
+				con->peer_hostname, peer_port, fd, len);
+			return;
+		}
+	}
+	
+	if(up_direct){
+		// stat up flow
+		do_stat_order_flow( process, con->session, len+ETHERNET_IP_UDP_HEADER_SIZE, up_direct, 1 );
+		if( _chk_udp_header(con->buf ) ){
+			sys_log(LL_ERROR, "[ %s:%d ] recv udp from client: %s:%d, but no header, fd:%d, len:%d", __FILE__, __LINE__, 
+				con->peer_hostname, peer_port, fd, len);
+			return;
+		}
+		
+		socks_udp_header_t header;
+		unsigned char *real_data = _get_udp_header( &con->buf[0], &header, 1 );
+		if(header.host.atype == SOCKS_ATYPE_IPV4){
+			int send_length = con->data_length -(real_data - &con->buf[0]);
+			convert_to_sockaddr_in( &header.host, &addr);
+			
+			int pos = _get_udp_addr_pos(con, &addr, up_direct);
+			if( pos != -1 ){
+				con->remote_up_byte_num[pos] += len+ETHERNET_IP_UDP_HEADER_SIZE;
+			}
+			
+			addr_len = sizeof(addr);
+			len = sendto( fd, real_data, send_length, 0, (struct sockaddr *)&addr, addr_len);  
+			if( len< 0 ){
+				sys_log(LL_ERROR, "[ %s:%d ] forward client udp error, to: %s:%d, fd:%d", __FILE__, __LINE__, 
+					inet_ntoa(header.host.addr.ipv4), ntohs(header.host.port), fd );
+			}
+		}
+		else{
+			sys_log(LL_ERROR, "[ %s:%d ] atype unsupported, not forward client udp to: %s:%d, fd: %d", __FILE__, __LINE__, 
+				inet_ntoa(header.host.addr.ipv4), ntohs(header.host.port), fd );
+		}
+	}
+	else{ // remote
+
+		unsigned char buf[UDP_RECV_BUF_SIZE];
+		memset(buf, 0, sizeof(buf) );
+		
+		socks_udp_header_t header;
+		memset(&header, 0, sizeof(header) );
+		convert_to_socks_host_t( &header.host, &addr );
+		
+		unsigned char * data = _copy_udp_header_to_buf( &header, buf, 1);
+		
+		//copy remote received data to client's buffer
+		size_t head_length = data-buf;
+		int cpy_length = sizeof(buf)-head_length;
+		if( cpy_length >  con->data_length )
+			cpy_length = con->data_length;
+		memcpy( data, &con->buf[0], cpy_length );
+
+		int pos = _get_udp_addr_pos(con, &addr, up_direct);
+		if( pos != -1 ){
+			con->remote_down_byte_num[pos] += (len+ETHERNET_IP_UDP_HEADER_SIZE);
+		}
+		
+		int send_length = head_length+cpy_length;
+		convert_to_sockaddr_in( &con->peer_host, &addr);
+
+		addr_len = sizeof(addr);
+		len = sendto( fd, buf, send_length, 0, (struct sockaddr *)&addr, addr_len );
+		if( len< 0 ){
+			sys_log(LL_ERROR, "[ %s:%d ] forward remote udp error: %s:%d, fd: %d", __FILE__, __LINE__,
+				con->peer_hostname, ntohs(con->peer_host.port), fd );
+		}
+		else{
+			// stat down flow
+			do_stat_order_flow( process, con->session, len+ETHERNET_IP_UDP_HEADER_SIZE, up_direct, 1 );
+		}
+		return;
+	}
+	
+
+}
+
+static int _get_udp_addr_pos(socks_udp_connection_t * con, struct sockaddr_in * addr, int up_direct)
+{
+	int i = 0;
+	while( i < con->udp_remote_num ){
+		if(memcmp(&(con->remote_addr[i]), addr, sizeof(struct sockaddr_in)) == 0)
+			return i;
+		i++;
+	}
+	if (up_direct){
+		if ( con->udp_remote_num < SESSION_UDP_REMOTE_NUM ){
+			memcpy(&con->remote_addr[i], addr, sizeof(struct sockaddr_in) ) ;
+			con->udp_remote_num++;
+			return i;
+		}
+	}
+
+	return -1;
+}
+
+int udp_port_pool_init(socks_worker_process_t *process, int begin, int end)
+{
+	int i;
+	memset((void *)&process->udp_port_pool, 0, sizeof(process->udp_port_pool));
+	rb_list_init( &process->udp_port_pool, 0 );
+
+	if( begin < 0 || begin > end)
+		return -1;
+
+	for( i=begin; i<=end; i++ ){
+		rb_node_t *node = rb_list_pop( &process->rb_node_pool );
+		if( !node ){
+			break;
+		}
+		
+		node->key.lkey = i;
+		rb_list_add( &process->udp_port_pool, node );
+	}
+	return 0;
+}
+
+int udp_port_pool_pop(socks_worker_process_t *process)
+{
+	struct rb_node *head, *next, *tmp;
+	head = &(process->udp_port_pool.head);
+	next = head->rb_right;
+	
+	if( next == head ){
+		return -1;
+	}
+
+	tmp = rb_list_pop( &process->udp_port_pool );
+	int port = tmp->key.lkey;
+	rb_list_add( &process->rb_node_pool, tmp );
+	
+	return port;
+}
+
+int udp_port_pool_add(socks_worker_process_t *process, int port )
+{
+	struct rb_node *node, *head;
+		
+	head = &(process->udp_port_pool.head);
+		
+	node = rb_list_pop( &process->rb_node_pool );
+	if( !node ){
+		// no memory, failed, don't add.
+		return -1;
+	}
+	node->key.lkey = port;
+	rb_list_add( &process->udp_port_pool, node );
+
+	return 0;
+}
+
+int udp_port_pool_exit(socks_worker_process_t *process)
+{
+	struct rb_node *head, *next, *tmp;
+	socks_order_t *order;
+
+	head = (&process->udp_port_pool.head);
+	next = head->rb_right;
+
+	while( next != head ){
+		tmp = next->rb_right;
+
+		if( !rb_is_pool(next) )
+			free(next);
+		next = tmp;
+	}
+
+	if( process->udp_port_pool.pool )
+		free(process->udp_port_pool.pool);
+
+	return 0;
+}
+
+
+// //upd_client 和 remote是独立端口, 在多网卡及内外网卡情况下可以考虑使用(代码暂时保留)
+//udp_client使用设定范围内的端口， remote端口任意，由系统内核分配
+void _udp_data_transform_cb_2( socks_worker_process_t *process, int fd, int events,  void *arg)
+{
+	socks_udp_connection_t *con = (socks_udp_connection_t *)arg;
+	socks_session_t * session;
+	socks_udp_connection_t *peer;
+	unsigned char *real_data;
+	socks_udp_header_t header;
+	
+	int up_direct =  0;
+	int ret = is_fd_in_udp_listen_fd( process, fd);
+	if( ret )
+		up_direct = 1;
+
+	if( events & EPOLLIN)
+	{
+		struct sockaddr_in addr;  
+    		int addr_len = sizeof(struct sockaddr_in);
+		_clean_udp_recv_buf (con); // 需要确认数据包是否1次性可以读完，应该是一次性的
+		int len = recvfrom( fd, con->buf,UDP_RECV_BUF_SIZE-con->data_length, 0 , (struct sockaddr *)&addr ,&addr_len); 
+
+		char *peer_hostname = inet_ntoa( addr.sin_addr);
+		int peer_port = ntohs(addr.sin_port);
+		con->data_length += len;
+		sys_log(LL_DEBUG, "[ %s:%d ] recv udp from: %s:%d, fd:%d, len:%d", __FILE__, __LINE__, peer_hostname, peer_port, fd, len);
+
+		if( len <= 0 )
+		{ //recvfrom error
+			sys_log(LL_ERROR, "[ %s:%d ] recv udp from error len: %d", __FILE__, __LINE__, len);
+			return;
+		}
+		
+		if(up_direct){
+			//up flow
+			if( _chk_udp_header(con->buf ) ){
+				sys_log(LL_ERROR, "[ %s:%d ] recv udp from: %s:%d, but no header, fd:%d, len:%d", __FILE__, __LINE__,
+					peer_hostname, peer_port, fd, len);
+				return;
+			}
+			real_data = _get_udp_header( &con->buf[0], &header, 0);
+
+			rb_key_t key;
+			key.lkey = header.session;
+			//memcpy(&key.lkey, &header.session, sizeof(header.session));
+			rb_node_t * node = rb_tree_search(&process->udp_session_cache, &key);
+			if (!node){
+				sys_log(LL_ERROR, "[ %s:%d ] recv udp from: %s:%d, but no remote available, fd:%d, len:%d", __FILE__, __LINE__, 
+					peer_hostname, peer_port, fd, len);
+				return;
+			}
+			session = (socks_session_t *)header.session;
+			peer = session->udp_remote;
+			if (!peer){
+				sys_log(LL_ERROR, "[ %s:%d ] recv udp from: %s:%d, but no remote available, fd:%d, len:%d", __FILE__, __LINE__, 
+					peer_hostname, peer_port, fd, len);
+				return;
+			}
+			do_stat_order_flow( process, session, len+ETHERNET_IP_UDP_HEADER_SIZE, up_direct, 1 );
+
+			int send_length = con->data_length -(real_data - &con->buf[0]);
+			convert_to_sockaddr_in( &header.host, &addr);
+			int pos = _get_udp_addr_pos(peer, &addr, up_direct);
+			if( pos != -1 ){
+				peer->remote_up_byte_num[pos] += len+ETHERNET_IP_UDP_HEADER_SIZE;
+			}
+			
+			addr_len = sizeof(addr);
+			len = sendto( peer->fd, real_data, send_length, 0, (struct sockaddr *)&addr, addr_len);  
+			if( len< 0 ){
+				sys_log(LL_ERROR, "[ %s:%d ] forward client udp error: %s:%d, fd: %d", __FILE__, __LINE__, peer->peer_hostname, ntohs(header.host.port), fd );
+			}
+			return;
+		}
+		else{
+			//down flow
+			session = con->session;
+			peer = session->udp_client;
+
+			if( !peer ){  // no udp_client, error
+				sys_log(LL_ERROR, "[ %s:%d ] no udp_client, remote fd:%d", __FILE__, __LINE__, fd );
+				close_session( process, con->session);
+				return;
+			}
+			_clean_udp_recv_buf ( peer );
+			
+			socks_udp_header_t header;
+			memset(&header, 0, sizeof(header) );
+			convert_to_socks_host_t( &header.host, &addr );
+			memcpy( &header.session, &session, sizeof(session));
+			
+			unsigned char * buf = _copy_udp_header_to_buf( &header, &peer->buf[0], 0);
+			
+			//copy remote received data to client's buffer
+			size_t head_length = buf-&peer->buf[0];
+			int cpy_length = sizeof(peer->buf)-head_length;
+			if( cpy_length >  con->data_length )
+				cpy_length = con->data_length;
+			memcpy( buf, con->buf, cpy_length ); 
+
+			int pos = _get_udp_addr_pos(con, &addr, up_direct);
+			if( pos != -1 ){
+				con->remote_down_byte_num[pos] += (len+ETHERNET_IP_UDP_HEADER_SIZE);
+			}
+			
+			int send_length = head_length+cpy_length;
+			convert_to_sockaddr_in( &peer->peer_host, &addr);
+			addr_len = sizeof(addr);
+			len = sendto( peer->fd, &peer->buf[0], send_length, 0, (struct sockaddr *)&addr, addr_len);
+			if( len< 0 ){
+				sys_log(LL_ERROR, "[ %s:%d ] forward remote udp error: %s:%d, fd: %d", __FILE__, __LINE__, peer->peer_hostname, ntohs(peer->peer_host.port), fd );
+			}
+			else{
+				// stat down flow
+				do_stat_order_flow( process, con->session, len+ETHERNET_IP_UDP_HEADER_SIZE, up_direct, 1 );
+			}
+			return;
+		}
+	}
+	else if( events & EPOLLOUT )
+	{
+		/*peer = con->peer_conn;
+		if( peer->data_length > peer->sent_length ){
+			sys_log(LL_DEBUG, "[ %s:%d ] continue, send to %s , fd:%d, recv_fd:%d, dlen:%d, slen:%d", __FILE__, __LINE__, up_direct?"client":"remote", con->fd, peer->fd, 
+				peer->data_length, peer->sent_length);
+			//_send_data( con->peer_conn, con->fd );
+		}*/
+		return;
+	}
+}
+

@@ -1,0 +1,24 @@
+#ifndef _HTTP_REWRITE_URL_H_
+#define _HTTP_REWRITE_URL_H_
+
+
+#include <streamhtmlparser/htmlparser.h>
+
+typedef struct{
+    htmlparser_ctx *ctx;
+
+    const char *url;
+    int inside_url;
+    int quoted;
+    int last_attr_type;
+    char rewrite_url[1024];
+} htmlparser_ctx_ext_t;
+
+int rewrite_url_in_m3u8( socks_worker_process_t *process, socks_connection_t *con,http_response_t * response );
+
+int add_to_passwd_cache( socks_worker_process_t *process, socks_order_t *order, char *addr, char *passwd);
+int get_passwd_without_cache(socks_worker_process_t *process, socks_order_t *order, char *addr, char **passwd);
+int get_passwd_with_cache(socks_worker_process_t *process, socks_order_t *order, char *addr, char **passwd);
+int update_passwd_cache(socks_worker_process_t *process, socks_order_t *order);
+
+#endif
